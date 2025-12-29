@@ -10,6 +10,17 @@ const CalendarUtils = calendar.CalendarUtils;
 const ZDateError = errors.ZDateError;
 const Allocator = std.mem.Allocator;
 
+/// Helper to format unsigned integer with zero padding
+fn formatPadded(buf: []u8, value: u32, width: usize) ![]const u8 {
+    var i = width;
+    var v = value;
+    while (i > 0) : (i -= 1) {
+        buf[i - 1] = @intCast('0' + (v % 10));
+        v /= 10;
+    }
+    return buf[0..width];
+}
+
 /// Formatting methods for date strings
 pub const FormattingMethods = struct {
     /// Format to ISO 8601 string
@@ -32,21 +43,75 @@ pub const FormattingMethods = struct {
         const components = CalendarUtils.timestampToComponents(timestamp, .utc);
 
         // Format: YYYY-MM-DDTHH:mm:ss.sssZ
-        var buf: [100]u8 = undefined;
-        const result = try std.fmt.bufPrint(
-            &buf,
-            "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z",
-            .{
-                components.year,
-                components.month + 1,
-                components.day,
-                components.hour,
-                components.minute,
-                components.second,
-                components.millisecond,
-            },
-        );
-        return try allocator.dupe(u8, result);
+        // Manual formatting to avoid Zig 0.15 sign prefix issues
+        var buf: [30]u8 = undefined;
+        var pos: usize = 0;
+
+        // Year (4 digits)
+        const year_abs: u32 = if (components.year < 0) @intCast(-components.year) else @intCast(components.year);
+        var year_buf: [4]u8 = undefined;
+        const year_str = try formatPadded(&year_buf, year_abs, 4);
+        @memcpy(buf[pos..][0..4], year_str);
+        pos += 4;
+
+        buf[pos] = '-';
+        pos += 1;
+
+        // Month (2 digits)
+        var month_buf: [2]u8 = undefined;
+        const month_str = try formatPadded(&month_buf, @intCast(components.month + 1), 2);
+        @memcpy(buf[pos..][0..2], month_str);
+        pos += 2;
+
+        buf[pos] = '-';
+        pos += 1;
+
+        // Day (2 digits)
+        var day_buf: [2]u8 = undefined;
+        const day_str = try formatPadded(&day_buf, @intCast(components.day), 2);
+        @memcpy(buf[pos..][0..2], day_str);
+        pos += 2;
+
+        buf[pos] = 'T';
+        pos += 1;
+
+        // Hour (2 digits)
+        var hour_buf: [2]u8 = undefined;
+        const hour_str = try formatPadded(&hour_buf, @intCast(components.hour), 2);
+        @memcpy(buf[pos..][0..2], hour_str);
+        pos += 2;
+
+        buf[pos] = ':';
+        pos += 1;
+
+        // Minute (2 digits)
+        var minute_buf: [2]u8 = undefined;
+        const minute_str = try formatPadded(&minute_buf, @intCast(components.minute), 2);
+        @memcpy(buf[pos..][0..2], minute_str);
+        pos += 2;
+
+        buf[pos] = ':';
+        pos += 1;
+
+        // Second (2 digits)
+        var second_buf: [2]u8 = undefined;
+        const second_str = try formatPadded(&second_buf, @intCast(components.second), 2);
+        @memcpy(buf[pos..][0..2], second_str);
+        pos += 2;
+
+        buf[pos] = '.';
+        pos += 1;
+
+        // Millisecond (3 digits)
+        var ms_buf: [3]u8 = undefined;
+        const ms_str = try formatPadded(&ms_buf, @intCast(components.millisecond), 3);
+        @memcpy(buf[pos..][0..3], ms_str);
+        pos += 3;
+
+        buf[pos] = 'Z';
+        pos += 1;
+
+        return try allocator.dupe(u8, buf[0..pos]);
     }
 
     /// Format to date string

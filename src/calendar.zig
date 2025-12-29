@@ -287,6 +287,13 @@ pub const CalendarUtils = struct {
             components.hour -= extra_days * 24;
         }
 
+        // Normalize months (handle overflow/underflow)
+        if (components.month >= 12 or components.month < 0) {
+            const extra_years = @divFloor(components.month, 12);
+            components.year += extra_years;
+            components.month -= extra_years * 12;
+        }
+
         // Normalize days and months (more complex due to variable month lengths)
         while (components.day < 1) {
             components.month -= 1;
