@@ -28,42 +28,30 @@ const Allocator = std.mem.Allocator;
 /// Implements the full JavaScript Date API specification
 pub const ZDate = struct {
     /// Timestamp in milliseconds since Unix epoch (January 1, 1970, 00:00:00 UTC)
+    /// ZDate is a pure 8-byte value — allocator and io are passed per-function, not stored.
     timestamp: i64,
-    allocator: Allocator,
 
     const Self = @This();
 
     // ===== Constructors =====
 
     /// Initialize with current date/time
-    pub fn now(allocator: Allocator) !Self {
-        const current_ms = std.time.milliTimestamp();
-        return fromTimestamp(allocator, current_ms);
+    /// Requires io context from std.process.Init (Zig 0.16+)
+    pub fn now(io: std.Io) Self {
+        return fromTimestamp(nowTimestamp(io));
     }
 
     /// Initialize from timestamp (milliseconds)
-    /// Labeled block example 1 from specification
-    pub fn fromTimestamp(allocator: Allocator, ms: i64) !Self {
-        var validated_timestamp: i64 = undefined;
-
-        timestamp_validator: {
-            if (ms < Constants.MIN_TIME or ms > Constants.MAX_TIME) {
-                validated_timestamp = Constants.INVALID_TIME;
-                break :timestamp_validator;
-            }
-            validated_timestamp = ms;
-            break :timestamp_validator;
-        }
-
-        return .{
-            .timestamp = validated_timestamp,
-            .allocator = allocator,
-        };
+    pub fn fromTimestamp(ms: i64) Self {
+        const validated_timestamp: i64 = if (ms < Constants.MIN_TIME or ms > Constants.MAX_TIME)
+            Constants.INVALID_TIME
+        else
+            ms;
+        return .{ .timestamp = validated_timestamp };
     }
 
     /// Initialize from components (year, month, day, etc.)
     pub fn fromComponents(
-        allocator: Allocator,
         year: i32,
         month: i32,
         day: ?i32,
@@ -71,7 +59,7 @@ pub const ZDate = struct {
         minute: ?i32,
         second: ?i32,
         millisecond: ?i32,
-    ) !Self {
+    ) Self {
         const components = DateComponents{
             .year = year,
             .month = month,
@@ -83,16 +71,15 @@ pub const ZDate = struct {
         };
 
         if (!CalendarUtils.validateComponents(components)) {
-            return fromTimestamp(allocator, Constants.INVALID_TIME);
+            return fromTimestamp(Constants.INVALID_TIME);
         }
 
         const timestamp = CalendarUtils.componentsToTimestamp(components, .local);
-        return fromTimestamp(allocator, timestamp);
+        return fromTimestamp(timestamp);
     }
 
     /// Initialize from components (UTC)
     pub fn fromComponentsUTC(
-        allocator: Allocator,
         year: i32,
         month: i32,
         day: ?i32,
@@ -100,7 +87,7 @@ pub const ZDate = struct {
         minute: ?i32,
         second: ?i32,
         millisecond: ?i32,
-    ) !Self {
+    ) Self {
         const components = DateComponents{
             .year = year,
             .month = month,
@@ -112,30 +99,31 @@ pub const ZDate = struct {
         };
 
         if (!CalendarUtils.validateComponents(components)) {
-            return fromTimestamp(allocator, Constants.INVALID_TIME);
+            return fromTimestamp(Constants.INVALID_TIME);
         }
 
         const timestamp = CalendarUtils.componentsToTimestamp(components, .utc);
-        return fromTimestamp(allocator, timestamp);
+        return fromTimestamp(timestamp);
     }
 
     /// Initialize from ISO 8601 string
-    pub fn fromISO8601(allocator: Allocator, str: []const u8) !Self {
+    pub fn fromISO8601(str: []const u8) Self {
         const timestamp = ParsingMethods.parseISO8601(str) catch Constants.INVALID_TIME;
-        return fromTimestamp(allocator, timestamp);
+        return fromTimestamp(timestamp);
     }
 
     /// Initialize from date string (various formats)
-    pub fn fromString(allocator: Allocator, str: []const u8) !Self {
-        const timestamp = ParsingMethods.parse(str);
-        return fromTimestamp(allocator, timestamp);
+    pub fn fromString(str: []const u8) Self {
+        return fromTimestamp(ParsingMethods.parse(str));
     }
 
     // ===== Static Methods (Date.*) =====
 
     /// Date.now() - Get current timestamp in milliseconds
-    pub fn nowTimestamp() i64 {
-        return std.time.milliTimestamp();
+    /// Requires io context from std.process.Init (Zig 0.16+)
+    pub fn nowTimestamp(io: std.Io) i64 {
+        const t = std.Io.Clock.real.now(io);
+        return t.toMilliseconds();
     }
 
     /// Date.parse() - Parse date string to timestamp
@@ -347,48 +335,48 @@ pub const ZDate = struct {
     // ===== Formatting Methods =====
 
     /// toString() - Convert to string (local time)
-    pub fn toString(self: Self) ![]u8 {
-        return FormattingMethods.toString(self.timestamp, self.allocator);
+    pub fn toString(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toString(self.timestamp, allocator);
     }
 
     /// toDateString() - Date portion only
-    pub fn toDateString(self: Self) ![]u8 {
-        return FormattingMethods.toDateString(self.timestamp, self.allocator);
+    pub fn toDateString(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toDateString(self.timestamp, allocator);
     }
 
     /// toTimeString() - Time portion only
-    pub fn toTimeString(self: Self) ![]u8 {
-        return FormattingMethods.toTimeString(self.timestamp, self.allocator);
+    pub fn toTimeString(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toTimeString(self.timestamp, allocator);
     }
 
     /// toISOString() - ISO 8601 format (UTC)
-    pub fn toISOString(self: Self) ![]u8 {
-        return FormattingMethods.toISOString(self.timestamp, self.allocator);
+    pub fn toISOString(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toISOString(self.timestamp, allocator);
     }
 
     /// toJSON() - JSON representation
-    pub fn toJSON(self: Self) ![]u8 {
-        return FormattingMethods.toJSON(self.timestamp, self.allocator);
+    pub fn toJSON(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toJSON(self.timestamp, allocator);
     }
 
     /// toUTCString() - UTC string
-    pub fn toUTCString(self: Self) ![]u8 {
-        return FormattingMethods.toUTCString(self.timestamp, self.allocator);
+    pub fn toUTCString(self: Self, allocator: Allocator) ![]u8 {
+        return FormattingMethods.toUTCString(self.timestamp, allocator);
     }
 
     /// toLocaleDateString() - Localized date string
-    pub fn toLocaleDateString(self: Self, locale: ?[]const u8) ![]u8 {
-        return FormattingMethods.toLocaleDateString(self.timestamp, self.allocator, locale);
+    pub fn toLocaleDateString(self: Self, allocator: Allocator, locale: ?[]const u8) ![]u8 {
+        return FormattingMethods.toLocaleDateString(self.timestamp, allocator, locale);
     }
 
     /// toLocaleTimeString() - Localized time string
-    pub fn toLocaleTimeString(self: Self, locale: ?[]const u8) ![]u8 {
-        return FormattingMethods.toLocaleTimeString(self.timestamp, self.allocator, locale);
+    pub fn toLocaleTimeString(self: Self, allocator: Allocator, locale: ?[]const u8) ![]u8 {
+        return FormattingMethods.toLocaleTimeString(self.timestamp, allocator, locale);
     }
 
     /// toLocaleString() - Localized date and time string
-    pub fn toLocaleString(self: Self, locale: ?[]const u8) ![]u8 {
-        return FormattingMethods.toLocaleString(self.timestamp, self.allocator, locale);
+    pub fn toLocaleString(self: Self, allocator: Allocator, locale: ?[]const u8) ![]u8 {
+        return FormattingMethods.toLocaleString(self.timestamp, allocator, locale);
     }
 
     /// valueOf() - Return timestamp
@@ -421,31 +409,31 @@ pub const ZDate = struct {
     /// Add milliseconds
     pub fn addMilliseconds(self: Self, ms: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addMilliseconds(self.timestamp, ms);
-        return fromTimestamp(self.allocator, new_timestamp);
+        return fromTimestamp(new_timestamp);
     }
 
     /// Add seconds
     pub fn addSeconds(self: Self, seconds: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addSeconds(self.timestamp, seconds);
-        return fromTimestamp(self.allocator, new_timestamp);
+        return fromTimestamp(new_timestamp);
     }
 
     /// Add minutes
     pub fn addMinutes(self: Self, minutes: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addMinutes(self.timestamp, minutes);
-        return fromTimestamp(self.allocator, new_timestamp);
+        return fromTimestamp(new_timestamp);
     }
 
     /// Add hours
     pub fn addHours(self: Self, hours: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addHours(self.timestamp, hours);
-        return fromTimestamp(self.allocator, new_timestamp);
+        return fromTimestamp(new_timestamp);
     }
 
     /// Add days
     pub fn addDays(self: Self, days: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addDays(self.timestamp, days);
-        return fromTimestamp(self.allocator, new_timestamp);
+        return fromTimestamp(new_timestamp);
     }
 
     /// Difference in milliseconds

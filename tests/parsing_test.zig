@@ -49,8 +49,7 @@ test "parse whitespace only returns INVALID_TIME" {
 }
 
 test "fromISO8601 with valid full format" {
-    const allocator = std.testing.allocator;
-    const date = try ZDate.fromISO8601(allocator, "2024-12-25T15:30:45.123Z");
+    const date = ZDate.fromISO8601("2024-12-25T15:30:45.123Z");
     try std.testing.expect(date.isValid());
     try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
     try std.testing.expectEqual(@as(i32, 11), date.getUTCMonth());
@@ -62,14 +61,12 @@ test "fromISO8601 with valid full format" {
 }
 
 test "fromISO8601 leap year February 29" {
-    const allocator = std.testing.allocator;
-    const date = try ZDate.fromISO8601(allocator, "2024-02-29");
+    const date = ZDate.fromISO8601("2024-02-29");
     try std.testing.expect(date.isValid());
     try std.testing.expectEqual(@as(i32, 29), date.getUTCDate());
 }
 
 test "fromString with various formats" {
-    const allocator = std.testing.allocator;
-    const date = try ZDate.fromString(allocator, "2024-01-01");
+    const date = ZDate.fromString("2024-01-01");
     try std.testing.expect(date.isValid());
 }
