@@ -65,7 +65,7 @@ test "toUTCString format" {
 test "toJSON equals toISOString" {
     const allocator = std.testing.allocator;
     const date = ZDate.fromComponentsUTC(2024, 0, 1, 0, 0, 0, 0);
-    const json_str = try date.toJSON(allocator);
+    const json_str = (try date.toJSON(allocator)).?;
     defer allocator.free(json_str);
     const iso_str = try date.toISOString(allocator);
     defer allocator.free(iso_str);
@@ -104,4 +104,18 @@ test "invalid date toString returns 'Invalid Date'" {
     const str = try date.toString(allocator);
     defer allocator.free(str);
     try std.testing.expectEqualStrings("Invalid Date", str);
+}
+
+test "toJSON returns null for Invalid Date (not an error)" {
+    const allocator = std.testing.allocator;
+    const date = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const result = try date.toJSON(allocator);
+    try std.testing.expectEqual(@as(?[]u8, null), result);
+}
+
+test "toJSON returns null for an out-of-range (non-sentinel) timestamp too" {
+    const allocator = std.testing.allocator;
+    const date = ZDate{ .timestamp = Constants.MAX_TIME + 1 };
+    const result = try date.toJSON(allocator);
+    try std.testing.expectEqual(@as(?[]u8, null), result);
 }

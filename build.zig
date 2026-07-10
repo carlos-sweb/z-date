@@ -9,6 +9,22 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/zdate.zig"),
     });
 
+    // Documentation (zig-out/docs/index.html), generated from doc comments
+    const docs_obj = b.addObject(.{
+        .name = "zdate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zdate.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const docs_step = b.step("docs", "Generate API documentation");
+    docs_step.dependOn(&b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    }).step);
+
     // Tests
     const test_step = b.step("test", "Run library tests");
 
@@ -22,6 +38,14 @@ pub fn build(b: *std.Build) void {
         "tests/edge_cases_test.zig",
         "tests/arithmetic_test.zig",
         "tests/iso8601_test.zig",
+        "tests/ecma_compliance_test.zig",
+        "tests/locale_test.zig",
+        "tests/overflow_safety_test.zig",
+        "tests/dayjs_locales_test.zig",
+        "tests/legacy_compat_test.zig",
+        "tests/timezone_test.zig",
+        "tests/v8_differential_test.zig",
+        "tests/test262_port_test.zig",
     };
 
     for (test_files, 0..) |test_file, i| {

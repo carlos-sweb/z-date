@@ -5,15 +5,15 @@ const ZDate = zdate.ZDate;
 test "parse full ISO 8601 with timezone Z" {
     const date = ZDate.fromISO8601("2024-01-01T00:00:00.000Z");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
 }
 
 test "parse ISO 8601 date only format" {
     const date = ZDate.fromISO8601("2024-12-25");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 11), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 25), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 11), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 25), date.getUTCDate().?);
 }
 
 test "format and parse round trip" {
@@ -48,7 +48,7 @@ test "ISO 8601 with all components" {
 test "ISO 8601 leap year date" {
     const date = ZDate.fromISO8601("2024-02-29T00:00:00.000Z");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 29), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 29), date.getUTCDate().?);
 }
 
 test "ISO 8601 year 1970" {
@@ -59,14 +59,14 @@ test "ISO 8601 year 1970" {
 
 test "ISO 8601 parsing preserves milliseconds" {
     const date = ZDate.fromISO8601("2024-01-01T00:00:00.456Z");
-    try std.testing.expectEqual(@as(i32, 456), date.getUTCMilliseconds());
+    try std.testing.expectEqual(@as(i32, 456), date.getUTCMilliseconds().?);
 }
 
 test "toJSON produces ISO 8601 format" {
     const allocator = std.testing.allocator;
 
     const date = ZDate.fromComponentsUTC(2024, 0, 1, 0, 0, 0, 0);
-    const json_str = try date.toJSON(allocator);
+    const json_str = (try date.toJSON(allocator)).?;
     defer allocator.free(json_str);
     // Should be valid ISO 8601
     const parsed = ZDate.fromISO8601(json_str);

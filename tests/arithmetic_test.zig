@@ -146,3 +146,53 @@ test "addMilliseconds underflow detection" {
     const result = date.addMilliseconds(-1);
     try std.testing.expectError(zdate.ZDateError.OutOfRange, result);
 }
+
+// ===== NaN-like semantics for Invalid Date (ECMA-262: any comparison =====
+// ===== involving NaN is false; NaN - x / x - NaN is NaN)              =====
+
+test "equals is false when either operand is Invalid Date" {
+    const invalid = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const valid = ZDate.fromTimestamp(0);
+    try std.testing.expect(!invalid.equals(invalid));
+    try std.testing.expect(!invalid.equals(valid));
+    try std.testing.expect(!valid.equals(invalid));
+}
+
+test "before/after are false when either operand is Invalid Date" {
+    const invalid = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const valid = ZDate.fromTimestamp(0);
+    try std.testing.expect(!invalid.before(valid));
+    try std.testing.expect(!valid.before(invalid));
+    try std.testing.expect(!invalid.after(valid));
+    try std.testing.expect(!valid.after(invalid));
+}
+
+test "compare returns null when either operand is Invalid Date" {
+    const invalid = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const valid = ZDate.fromTimestamp(0);
+    try std.testing.expectEqual(@as(?std.math.Order, null), invalid.compare(valid));
+    try std.testing.expectEqual(@as(?std.math.Order, null), valid.compare(invalid));
+    try std.testing.expectEqual(@as(?std.math.Order, null), invalid.compare(invalid));
+}
+
+test "diff* return null when either operand is Invalid Date" {
+    const invalid = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const out_of_range = ZDate{ .timestamp = Constants.MIN_TIME - 1 };
+    const valid = ZDate.fromTimestamp(0);
+
+    try std.testing.expectEqual(@as(?i64, null), invalid.diffMilliseconds(valid));
+    try std.testing.expectEqual(@as(?i64, null), valid.diffSeconds(invalid));
+    try std.testing.expectEqual(@as(?i64, null), invalid.diffMinutes(invalid));
+    try std.testing.expectEqual(@as(?i64, null), valid.diffHours(out_of_range));
+    try std.testing.expectEqual(@as(?i64, null), out_of_range.diffDays(valid));
+
+    // Also confirm this used to be a crash (integer overflow subtracting
+    // INVALID_TIME from a very negative timestamp) and now safely returns null.
+    try std.testing.expectEqual(@as(?i64, null), invalid.diffMilliseconds(ZDate.fromTimestamp(Constants.MIN_TIME)));
+}
+
+test "diff* still compute correctly for two valid dates" {
+    const date1 = ZDate.fromTimestamp(1000);
+    const date2 = ZDate.fromTimestamp(500);
+    try std.testing.expectEqual(@as(?i64, 500), date1.diffMilliseconds(date2));
+}

@@ -21,74 +21,71 @@ pub const DateComponents = struct {
 
 /// Calendar calculation utilities
 pub const CalendarUtils = struct {
+    /// True if `timestamp` cannot represent a valid ECMAScript Date: either
+    /// the `INVALID_TIME` sentinel, or outside `[MIN_TIME, MAX_TIME]`.
+    ///
+    /// `timestamp` is a public field on `ZDate`, so a caller can construct a
+    /// value directly (bypassing every constructor/setter) that is neither
+    /// the exact sentinel nor within the representable range; every getter
+    /// and non-ISO formatter must check both conditions before calling
+    /// `timestampToComponents`, not just equality with the sentinel.
+    pub fn isInvalidTimestamp(timestamp: i64) bool {
+        return timestamp == Constants.INVALID_TIME or
+            timestamp < Constants.MIN_TIME or
+            timestamp > Constants.MAX_TIME;
+    }
+
     /// Check if year is leap year
-    /// Labeled block example 9 from specification
     pub fn isLeapYear(year: i32) bool {
-        leap_checker: {
-            // Divisible by 4
-            if (@mod(year, 4) != 0) {
+        // Divisible by 4
+        if (@mod(year, 4) != 0) {
+            return false;
+        }
+
+        // Century years must be divisible by 400
+        if (@mod(year, 100) == 0) {
+            if (@mod(year, 400) != 0) {
                 return false;
             }
-
-            // Century years must be divisible by 400
-            if (@mod(year, 100) == 0) {
-                if (@mod(year, 400) != 0) {
-                    return false;
-                }
-            }
-
-            break :leap_checker;
         }
 
         return true;
     }
 
     /// Get days in month
-    /// Labeled block example 10 from specification
     pub fn getDaysInMonth(year: i32, month: i32) i32 {
-        var days: i32 = undefined;
+        // Validate month
+        if (month < 0 or month > 11) {
+            return 0;
+        }
 
-        days_calculator: {
-            // Validate month
-            if (month < 0 or month > 11) {
-                return 0;
-            }
+        var days = Constants.DAYS_IN_MONTH[@intCast(month)];
 
-            days = Constants.DAYS_IN_MONTH[@intCast(month)];
-
-            // February in leap year
-            if (month == 1 and isLeapYear(year)) {
-                days = 29;
-            }
-
-            break :days_calculator;
+        // February in leap year
+        if (month == 1 and isLeapYear(year)) {
+            days = 29;
         }
 
         return days;
     }
 
-    /// Get day of week (0-6, Sunday=0) using Zeller's congruence
+    /// Get day of week (0-6, Sunday=0), derived from days-since-epoch with
+    /// the same calendar arithmetic as the rest of the library.
+    ///
+    /// (Previously Zeller's congruence, whose truncated-division `k`/`j`
+    /// split silently produced wrong weekdays for negative (BCE) years — a
+    /// bug surfaced by differential testing against V8.)
     pub fn getDayOfWeek(year: i32, month: i32, day: i32) i32 {
-        // Adjust month and year for Zeller's congruence
-        // (January and February are counted as months 13 and 14 of previous year)
-        var adj_month = month + 1; // Convert from 0-based to 1-based
-        var adj_year = year;
-
-        if (adj_month <= 2) {
-            adj_month += 12;
-            adj_year -= 1;
+        var days: i64 = yearToEpochDay(year);
+        var m: i32 = 0;
+        while (m < month) : (m += 1) {
+            days += getDaysInMonth(year, m);
         }
+        days += day - 1;
 
-        const q = day;
-        const m = adj_month;
-        const k = @mod(adj_year, 100);
-        const j = @divTrunc(adj_year, 100);
-
-        // Zeller's congruence formula
-        const h = @mod(q + @divTrunc(13 * (m + 1), 5) + k + @divTrunc(k, 4) + @divTrunc(j, 4) - 2 * j, 7);
-
-        // Convert to Sunday=0 format (Zeller gives Saturday=0)
-        return @mod(h + 6, 7);
+        // 1970-01-01 was a Thursday (day-of-week 4, Sunday = 0); @mod is
+        // floored, so negative epoch days resolve correctly.
+        return @intCast(@mod(days + 4, 7));
     }
 
     /// Get day of year (0-365)
@@ -173,6 +170,14 @@ pub const CalendarUtils = struct {
     }
 
     /// Convert date components to timestamp
+    ///
+    /// Uses saturating arithmetic for the final millisecond computation: a
+    /// component set whose `year` is so extreme that `days * MS_PER_DAY`
+    /// would overflow i64 (e.g. year ~2e9, still well within i32) saturates
+    /// to i64::MAX/MIN instead of panicking. i64::MAX/MIN is far outside
+    /// [MIN_TIME, MAX_TIME], so callers that check the returned timestamp
+    /// against that range (as `fromTimestamp`/`finalize` do) correctly treat
+    /// it as Invalid Date.
     pub fn componentsToTimestamp(components: DateComponents, mode: TimezoneMode) i64 {
         // Calculate days since epoch
         var days: i64 = yearToEpochDay(components.year);
@@ -187,18 +192,21 @@ pub const CalendarUtils = struct {
         days += components.day - 1;
 
         // Calculate total milliseconds
-        var timestamp: i64 = days * Constants.MS_PER_DAY;
-        timestamp += @as(i64, components.hour) * Constants.MS_PER_HOUR;
-        timestamp += @as(i64, components.minute) * Constants.MS_PER_MINUTE;
-        timestamp += @as(i64, components.second) * Constants.MS_PER_SECOND;
-        timestamp += @as(i64, components.millisecond);
+        var timestamp: i64 = days *| Constants.MS_PER_DAY;
+        timestamp +|= @as(i64, components.hour) * Constants.MS_PER_HOUR;
+        timestamp +|= @as(i64, components.minute) * Constants.MS_PER_MINUTE;
+        timestamp +|= @as(i64, components.second) * Constants.MS_PER_SECOND;
+        timestamp +|= @as(i64, components.millisecond);
 
         // Remove timezone offset if in local mode
         return TimezoneUtils.removeTimezoneOffset(timestamp, mode);
     }
 
     /// Calculate days since epoch for a given year's January 1
-    fn yearToEpochDay(year: i32) i64 {
+    ///
+    /// Takes `year` as i64 (any i32 value widens implicitly) so that
+    /// `year - 1970` can never overflow, even for `year == minInt(i32)`.
+    fn yearToEpochDay(year: i64) i64 {
         const y = year - 1970;
 
         // Count leap years between 1970 and year
@@ -206,18 +214,18 @@ pub const CalendarUtils = struct {
 
         if (y >= 0) {
             // Years since 1970
-            const years_since = @as(i64, y);
+            const years_since = y;
             // Count leap years: every 4 years, except centuries, except every 400 years
 
             // Leap years from 1970 to year-1
             leap_years = @divFloor(years_since + 1, 4) - @divFloor(years_since + 69, 100) + @divFloor(years_since + 369, 400);
         } else {
             // Years before 1970
-            const years_before = @as(i64, -y);
+            const years_before = -y;
             leap_years = -(@divFloor(years_before + 2, 4) - @divFloor(years_before + 30, 100) + @divFloor(years_before + 30, 400));
         }
 
-        const total_days = @as(i64, y) * 365 + leap_years;
+        const total_days = y * 365 + leap_years;
         return total_days;
     }
 
@@ -258,63 +266,108 @@ pub const CalendarUtils = struct {
     }
 
     /// Normalize components (handle overflow/underflow)
+    ///
+    /// All arithmetic is done with i64 locals so a caller-supplied component
+    /// far outside its normal range (e.g. `month == minInt(i32)`) can never
+    /// overflow i32 mid-computation; fields are narrowed back to i32 only at
+    /// the very end, with `year` clamped (not truncated) into i32 range.
+    ///
+    /// The day/month carry is resolved by converting to an absolute
+    /// day-since-epoch offset and back (the same closed-form year
+    /// approximation `timestampToComponents` uses), instead of a per-month
+    /// loop — so a pathological `day` (e.g. 2_000_000_000) normalizes in
+    /// O(1) instead of tens of millions of loop iterations.
     pub fn normalizeComponents(components: *DateComponents) void {
+        var year: i64 = components.year;
+        var month: i64 = components.month;
+        var day: i64 = components.day;
+        var hour: i64 = components.hour;
+        var minute: i64 = components.minute;
+        var second: i64 = components.second;
+        var millisecond: i64 = components.millisecond;
+
         // Normalize milliseconds
-        if (components.millisecond >= 1000 or components.millisecond < 0) {
-            const extra_seconds = @divFloor(components.millisecond, 1000);
-            components.second += extra_seconds;
-            components.millisecond -= extra_seconds * 1000;
+        if (millisecond >= 1000 or millisecond < 0) {
+            const extra_seconds = @divFloor(millisecond, 1000);
+            second += extra_seconds;
+            millisecond -= extra_seconds * 1000;
         }
 
         // Normalize seconds
-        if (components.second >= 60 or components.second < 0) {
-            const extra_minutes = @divFloor(components.second, 60);
-            components.minute += extra_minutes;
-            components.second -= extra_minutes * 60;
+        if (second >= 60 or second < 0) {
+            const extra_minutes = @divFloor(second, 60);
+            minute += extra_minutes;
+            second -= extra_minutes * 60;
         }
 
         // Normalize minutes
-        if (components.minute >= 60 or components.minute < 0) {
-            const extra_hours = @divFloor(components.minute, 60);
-            components.hour += extra_hours;
-            components.minute -= extra_hours * 60;
+        if (minute >= 60 or minute < 0) {
+            const extra_hours = @divFloor(minute, 60);
+            hour += extra_hours;
+            minute -= extra_hours * 60;
         }
 
         // Normalize hours
-        if (components.hour >= 24 or components.hour < 0) {
-            const extra_days = @divFloor(components.hour, 24);
-            components.day += extra_days;
-            components.hour -= extra_days * 24;
+        if (hour >= 24 or hour < 0) {
+            const extra_days = @divFloor(hour, 24);
+            day += extra_days;
+            hour -= extra_days * 24;
         }
 
         // Normalize months (handle overflow/underflow)
-        if (components.month >= 12 or components.month < 0) {
-            const extra_years = @divFloor(components.month, 12);
-            components.year += extra_years;
-            components.month -= extra_years * 12;
+        if (month >= 12 or month < 0) {
+            const extra_years = @divFloor(month, 12);
+            year += extra_years;
+            month -= extra_years * 12;
         }
 
-        // Normalize days and months (more complex due to variable month lengths)
-        while (components.day < 1) {
-            components.month -= 1;
-            if (components.month < 0) {
-                components.month = 11;
-                components.year -= 1;
+        // Normalize day/month (variable month lengths). `month` is already
+        // in [0,11] at this point. Skip the (more expensive) round-trip
+        // entirely in the common case where `day` is already in range.
+        const year_for_lookup: i32 = @intCast(std.math.clamp(year, std.math.minInt(i32), std.math.maxInt(i32)));
+        const month_i32: i32 = @intCast(month);
+        if (day < 1 or day > getDaysInMonth(year_for_lookup, month_i32)) {
+            var days_before_month: i64 = 0;
+            var m: i64 = 0;
+            while (m < month) : (m += 1) {
+                days_before_month += getDaysInMonth(year_for_lookup, @intCast(m));
             }
-            components.day += getDaysInMonth(components.year, components.month);
+
+            const absolute_day: i64 = yearToEpochDay(year) + days_before_month + (day - 1);
+
+            // Approximate the year from the absolute day offset (same ratio
+            // as timestampToComponents: 146097 days == 400 Gregorian years),
+            // then adjust by a small, bounded number of steps.
+            var new_year: i64 = 1970 + @divTrunc(absolute_day * 400, 146097);
+            while (true) {
+                const year_start = yearToEpochDay(new_year);
+                const next_year_start = yearToEpochDay(new_year + 1);
+                if (absolute_day >= year_start and absolute_day < next_year_start) break;
+                if (absolute_day < year_start) new_year -= 1 else new_year += 1;
+            }
+
+            const new_year_for_lookup: i32 = @intCast(std.math.clamp(new_year, std.math.minInt(i32), std.math.maxInt(i32)));
+            const day_of_year = absolute_day - yearToEpochDay(new_year);
+
+            var new_month: i32 = 0;
+            var day_in_month: i64 = day_of_year + 1;
+            while (new_month < 12) : (new_month += 1) {
+                const days_in_current = getDaysInMonth(new_year_for_lookup, new_month);
+                if (day_in_month <= days_in_current) break;
+                day_in_month -= days_in_current;
+            }
+
+            year = new_year;
+            month = new_month;
+            day = day_in_month;
         }
 
-        while (true) {
-            const max_days = getDaysInMonth(components.year, components.month);
-            if (components.day <= max_days) {
-                break;
-            }
-            components.day -= max_days;
-            components.month += 1;
-            if (components.month > 11) {
-                components.month = 0;
-                components.year += 1;
-            }
-        }
+        components.year = @intCast(std.math.clamp(year, std.math.minInt(i32), std.math.maxInt(i32)));
+        components.month = @intCast(month);
+        components.day = @intCast(day);
+        components.hour = @intCast(hour);
+        components.minute = @intCast(minute);
+        components.second = @intCast(second);
+        components.millisecond = @intCast(millisecond);
     }
 };

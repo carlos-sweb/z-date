@@ -47,40 +47,40 @@ test "fromTimestamp() at MIN_TIME boundary" {
 test "fromComponents() creates correct date" {
     const date = ZDate.fromComponentsUTC(2024, 0, 1, 0, 0, 0, 0);
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate().?);
 }
 
 test "fromComponents() with default values" {
     const date = ZDate.fromComponentsUTC(2024, 0, null, null, null, null, null);
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate().?);
 }
 
 test "fromISO8601() parses valid string" {
     const date = ZDate.fromISO8601("2024-01-01T00:00:00.000Z");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 1), date.getUTCDate().?);
 }
 
 test "fromISO8601() parses date only" {
     const date = ZDate.fromISO8601("2024-01-15");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 15), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 0), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 15), date.getUTCDate().?);
 }
 
 test "fromISO8601() parses year and month" {
     const date = ZDate.fromISO8601("2024-06");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 5), date.getUTCMonth());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 5), date.getUTCMonth().?);
 }
 
 test "fromISO8601() with invalid format" {
@@ -124,7 +124,7 @@ test "UTC() static method creates correct timestamp" {
     try std.testing.expect(timestamp != Constants.INVALID_TIME);
 
     const date = ZDate.fromTimestamp(timestamp);
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
 }
 
 test "UTC() static method with defaults" {

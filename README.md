@@ -2,18 +2,17 @@
 
 **ECMAScript-compatible Date/Time Library for Zig 0.16**
 
-Z-Date is a comprehensive date and time library for Zig that implements the full JavaScript Date API specification. Designed as a core component for JavaScript engines, it provides 100% compatibility with ECMAScript Date, including all static methods, instance methods, timezone handling (UTC and local), string parsing, and ISO 8601 formatting.
+Z-Date is a comprehensive date and time library for Zig that implements the full JavaScript Date API specification (ECMA-262 §21.4). Its conformance is not aspirational: the test suite includes a differential suite whose expected values are **V8's actual output**, plus ports of official **test262** cases. See the [conformance matrix](#ecma-262-214-conformance-matrix) for the method-by-method scope and the few documented deviations.
 
 ## Features
 
-- **Full ECMAScript Date Compatibility**: Implements all JavaScript Date methods
-- **Timezone Support**: Both UTC and local timezone operations
-- **ISO 8601**: Complete parsing and formatting support
-- **High Precision**: Millisecond precision timestamps
-- **Wide Range**: Supports dates from ±273,785 years from Unix epoch
-- **Type Safety**: Leverages Zig's type system for compile-time safety
+- **ECMA-262 §21.4 conformance, verified against V8**: constructors, getters/setters, parsing, formatting, Annex B legacy methods — differential-tested against real V8 output
+- **Real IANA timezone support**: system tzdata on Linux/macOS, Windows registry + CLDR mapping, 599 embeddable zones for WASM/embedded; historical DST transitions, POSIX TZ rules for far-future dates, and spec-mandated DST disambiguation
+- **145 locales** (Day.js data) with numeric and long (`Intl`-like) date styles, lazily compiled — referencing one locale embeds only that locale
+- **ISO 8601**: strict §21.4.3.2 grammar, extended ±YYYYYY years, plus V8-parity legacy parse formats
+- **Wide Range**: ±273,785 years from Unix epoch (±8.64e15 ms), overflow-safe arithmetic
 - **Pure Value Type**: `ZDate` is a pure 8-byte struct — no allocator or io stored internally
-- **Comprehensive Tests**: 150+ tests ensuring correctness
+- **300+ tests**, including fuzzing of the parsers and TimeClip/overflow edge cases
 - **Zig 0.16 Native**: Uses `std.Io.Clock` for time acquisition
 
 ## Requirements
@@ -57,13 +56,19 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const allocator = init.gpa;
 
-    // Create date from current time — io required for clock access
+    // Load the host's real timezone once at startup (optional: without it,
+    // local time == UTC, which ECMA-262 permits for hosts without tz data).
+    try ZDate.loadSystemTimezone(allocator, io, null);
+    defer ZDate.clearLocalTimezone();
+
+    // Create date from current time — io required for clock access.
+    // Component getters return ?i32: null means Invalid Date (JS's NaN).
     const now = ZDate.now(io);
-    std.debug.print("Current year: {}\n", .{now.getFullYear()});
+    std.debug.print("Current year: {d}\n", .{now.getFullYear().?});
 
     // Create date from timestamp — no io, no allocator
     const epoch = ZDate.fromTimestamp(0);
-    std.debug.print("Unix epoch: {}\n", .{epoch.getUTCFullYear()}); // 1970
+    std.debug.print("Unix epoch: {d}\n", .{epoch.getUTCFullYear().?}); // 1970
 
     // Create date from components — no allocator needed
     const custom = ZDate.fromComponentsUTC(
@@ -76,9 +81,14 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(iso_str);
     std.debug.print("ISO: {s}\n", .{iso_str}); // 2024-01-01T12:30:00.000Z
 
+    // Localized output: 145 bundled locales, numeric or long style
+    const es = try custom.toLocaleDateStringStyle(allocator, zdate.locales.es_cl, .long);
+    defer allocator.free(es);
+    std.debug.print("es-CL: {s}\n", .{es}); // 1 de enero de 2024
+
     // Parse ISO 8601 — no allocator needed
     const parsed = ZDate.fromISO8601("2024-12-25T00:00:00.000Z");
-    std.debug.print("Christmas month: {}\n", .{parsed.getUTCMonth()}); // 11 (December)
+    std.debug.print("Christmas month: {d}\n", .{parsed.getUTCMonth().?}); // 11 (December)
 }
 ```
 
@@ -93,105 +103,24 @@ pub fn main(init: std.process.Init) !void {
 
 This keeps every `ZDate` instance lightweight and suitable for use in JS engine heaps.
 
-## API Reference
+## API Overview
 
-### Static Methods
+The full, always-current API reference is generated from the source doc
+comments: run `zig build docs` and open `zig-out/docs/index.html`. Summary of
+the surface:
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `ZDate.now(io)` | Create date with current time | `const d = ZDate.now(io);` |
-| `ZDate.nowTimestamp(io)` | Get current timestamp (ms) | `const ts = ZDate.nowTimestamp(io);` |
-| `ZDate.parse(str)` | Parse date string to timestamp | `const ts = ZDate.parse("2024-01-01");` |
-| `ZDate.UTC(...)` | Create UTC timestamp from components | `const ts = ZDate.UTC(2024, 0, 1, 0, 0, 0, 0);` |
-| `ZDate.isLeapYear(year)` | Check if year is leap year | `const leap = ZDate.isLeapYear(2024);` |
-
-### Constructors
-
-| Method | Description |
-|--------|-------------|
-| `fromTimestamp(ms)` | Create from milliseconds since epoch |
-| `fromComponents(year, month, ...)` | Create from date/time components (local) |
-| `fromComponentsUTC(year, month, ...)` | Create from date/time components (UTC) |
-| `fromISO8601(str)` | Create from ISO 8601 string |
-| `fromString(str)` | Create from various date string formats |
-
-### Getters (Local Time)
-
-| Method | Returns | Range |
-|--------|---------|-------|
-| `getFullYear()` | Year (4 digits) | Any integer |
-| `getMonth()` | Month | 0-11 (0 = January) |
-| `getDate()` | Day of month | 1-31 |
-| `getDay()` | Day of week | 0-6 (0 = Sunday) |
-| `getHours()` | Hours | 0-23 |
-| `getMinutes()` | Minutes | 0-59 |
-| `getSeconds()` | Seconds | 0-59 |
-| `getMilliseconds()` | Milliseconds | 0-999 |
-| `getTime()` | Timestamp (ms since epoch) | i64 |
-| `getTimezoneOffset()` | Timezone offset (minutes) | Integer |
-
-### Getters (UTC)
-
-All getters have UTC equivalents: `getUTCFullYear()`, `getUTCMonth()`, `getUTCDate()`, `getUTCDay()`, `getUTCHours()`, `getUTCMinutes()`, `getUTCSeconds()`, `getUTCMilliseconds()`
-
-### Setters (Local Time)
-
-| Method | Description |
-|--------|-------------|
-| `setFullYear(year, ?month, ?day)` | Set year (optionally month and day) |
-| `setMonth(month, ?day)` | Set month (optionally day) |
-| `setDate(day)` | Set day of month |
-| `setHours(hour, ?min, ?sec, ?ms)` | Set hours (optionally min, sec, ms) |
-| `setMinutes(min, ?sec, ?ms)` | Set minutes (optionally sec, ms) |
-| `setSeconds(sec, ?ms)` | Set seconds (optionally ms) |
-| `setMilliseconds(ms)` | Set milliseconds |
-| `setTime(timestamp)` | Set timestamp directly |
-
-### Setters (UTC)
-
-All setters have UTC equivalents: `setUTCFullYear()`, `setUTCMonth()`, `setUTCDate()`, `setUTCHours()`, `setUTCMinutes()`, `setUTCSeconds()`, `setUTCMilliseconds()`
-
-### Formatting Methods
-
-All formatting methods require an `allocator` and return owned `[]u8` — the caller is responsible for freeing.
-
-| Method | Output Format | Example |
-|--------|---------------|---------|
-| `toString(allocator)` | Full date/time string | "Mon Jan 01 2024 00:00:00 GMT+0000" |
-| `toDateString(allocator)` | Date only | "Mon Jan 01 2024" |
-| `toTimeString(allocator)` | Time only | "00:00:00 GMT+0000" |
-| `toISOString(allocator)` | ISO 8601 (UTC) | "2024-01-01T00:00:00.000Z" |
-| `toJSON(allocator)` | JSON (same as ISO) | "2024-01-01T00:00:00.000Z" |
-| `toUTCString(allocator)` | UTC string | "Mon, 01 Jan 2024 00:00:00 GMT" |
-| `toLocaleDateString(allocator, ?locale)` | Localized date | "01/01/2024" |
-| `toLocaleTimeString(allocator, ?locale)` | Localized time | "00:00:00" |
-| `toLocaleString(allocator, ?locale)` | Localized date/time | "01/01/2024, 00:00:00" |
-
-### Arithmetic & Comparison
-
-| Method | Description |
-|--------|-------------|
-| `addMilliseconds(ms)` | Add/subtract milliseconds — returns `!ZDate` |
-| `addSeconds(sec)` | Add/subtract seconds — returns `!ZDate` |
-| `addMinutes(min)` | Add/subtract minutes — returns `!ZDate` |
-| `addHours(hours)` | Add/subtract hours — returns `!ZDate` |
-| `addDays(days)` | Add/subtract days — returns `!ZDate` |
-| `diffMilliseconds(other)` | Difference in milliseconds |
-| `diffSeconds(other)` | Difference in seconds |
-| `diffMinutes(other)` | Difference in minutes |
-| `diffHours(other)` | Difference in hours |
-| `diffDays(other)` | Difference in days |
-| `equals(other)` | Check equality |
-| `before(other)` | Check if before |
-| `after(other)` | Check if after |
-| `compare(other)` | Three-way comparison |
-
-### Validation
-
-| Method | Description |
-|--------|-------------|
-| `isValid()` | Check if date is valid |
-| `valueOf()` | Get primitive timestamp value |
+| Group | Methods | Notes |
+|---|---|---|
+| Static | `now(io)`, `nowTimestamp(io)`, `parse(str)`, `UTC(...)`, `isLeapYear(y)` | `parse` returns a timestamp (`INVALID_TIME` on failure) |
+| Constructors | `fromTimestamp`, `fromComponents[UTC]`, `fromISO8601`, `fromString` | Never fail — invalid input yields an Invalid Date, as in JS |
+| Timezone (host) | `loadSystemTimezone`, `loadNamedTimezone`, `loadEmbeddedTimezone`, `setLocalTimezone`, `clearLocalTimezone` | Process-wide, like a JS engine's host environment |
+| Getters | `get*` / `getUTC*` (8 components), `getTime`, `getTimezoneOffset`, `getYear` | Component getters return `?i32` — `null` ≡ JS `NaN` |
+| Setters | `set*` / `setUTC*`, `setTime`, `setYear` | Invalid Date stays invalid; results TimeClip-clamped |
+| Formatting | `toString`, `toDateString`, `toTimeString`, `toISOString`, `toJSON`, `toUTCString`, `toGMTString`, `toLocale*String[Style]` | Take `allocator`, return owned `[]u8`; `toJSON` returns `!?[]u8` (`null` for Invalid Date) |
+| Arithmetic | `add{Milliseconds,Seconds,Minutes,Hours,Days}` (`!ZDate`), `diff*` (`?i64`) | `diff*` return `null` if either date is invalid |
+| Comparison | `equals`, `before`, `after` (`bool`), `compare` (`?std.math.Order`) | NaN semantics: always false / `null` with an Invalid Date |
+| Validation | `isValid()`, `valueOf()` | |
+| Data namespaces | `zdate.locales` (145 locales), `zdate.zones` (599 IANA zones), `zdate.windows_zones` | Individually lazy — you embed only what you reference |
 
 ## Usage Examples
 
@@ -223,9 +152,9 @@ pub fn main(init: std.process.Init) !void {
     // Current timestamp in milliseconds
     const ms = ZDate.nowTimestamp(io);
 
-    // Current date object
+    // Current date object (getters return ?i32; null = Invalid Date)
     const today = ZDate.now(io);
-    std.debug.print("Year: {}\n", .{today.getFullYear()});
+    std.debug.print("Year: {d}\n", .{today.getFullYear().?});
 }
 ```
 
@@ -277,9 +206,9 @@ const next_week = try date.addDays(7);
 const later     = try date.addHours(3);
 const earlier   = try date.addMinutes(-30);
 
-// diff* methods return i64 — no try needed
-const diff_days = next_week.diffDays(date);      // 7
-const diff_ms   = next_week.diffMilliseconds(date);
+// diff* methods return ?i64 — null if either date is Invalid Date
+const diff_days = next_week.diffDays(date).?;      // 7
+const diff_ms   = next_week.diffMilliseconds(date).?;
 ```
 
 ### Comparison
@@ -292,7 +221,9 @@ if (date1.equals(date2)) { }   // false
 if (date1.before(date2)) { }   // true
 if (date2.after(date1))  { }   // true
 
-const order = date1.compare(date2); // .lt
+// compare returns ?std.math.Order — null if either date is Invalid Date
+// (JS NaN semantics: no ordering relation holds).
+const order = date1.compare(date2).?; // .lt
 ```
 
 ### Error Handling for Arithmetic
@@ -325,16 +256,48 @@ const feb29 = ZDate.fromComponentsUTC(2024, 1, 29, 0, 0, 0, 0);
 ### Timezone Handling
 
 ```zig
-const date = ZDate.fromComponentsUTC(2024, 0, 1, 0, 0, 0, 0);
+// Load the host's zone once at startup (TZ env var, then /etc/localtime;
+// on Windows: registry name -> CLDR mapping -> embedded tzdata).
+try ZDate.loadSystemTimezone(allocator, io, null);
+defer ZDate.clearLocalTimezone();
 
-// UTC getters
-const utc_hour = date.getUTCHours();  // 0
+// Or pick a specific IANA zone from the system tzdata...
+try ZDate.loadNamedTimezone(allocator, io, "America/Santiago");
 
-// Local getters (depends on system timezone)
-const local_hour = date.getHours();   // may differ from UTC
+// ...or from the embedded database (works on WASM/Windows; embeds ~1.4 MB)
+try ZDate.loadEmbeddedTimezone(allocator, "Asia/Tokyo");
 
-// Timezone offset in minutes
-const offset = date.getTimezoneOffset();
+// ...or embed exactly ONE zone (only that zone's ~2 KB goes in the binary)
+ZDate.setLocalTimezone(try zdate.Timezone.parseBytes(allocator, zdate.zones.america_santiago));
+
+const date = ZDate.fromComponentsUTC(2024, 5, 15, 12, 0, 0, 0);
+const utc_hour = date.getUTCHours().?;      // 12
+const local_hour = date.getHours().?;       // 8 in Santiago (winter, -04:00)
+const offset = date.getTimezoneOffset().?;  // 240 (UTC - local, in minutes)
+
+// DST is handled per-date, including the spec's disambiguation for local
+// times that repeat or never exist around a transition (tc39/ecma262#778).
+```
+
+### Localized Formatting
+
+```zig
+const date = ZDate.fromComponentsUTC(2024, 0, 15, 14, 30, 0, 0);
+
+// Numeric style honors each locale's date order and separators
+const us = try date.toLocaleDateString(allocator, zdate.locales.en_us); // "01/15/2024"
+defer allocator.free(us);
+
+// Long style matches Intl.DateTimeFormat's dateStyle: "long"
+const cl = try date.toLocaleDateStringStyle(allocator, zdate.locales.es_cl, .long);
+defer allocator.free(cl); // "15 de enero de 2024"
+
+const jp = try date.toLocaleDateStringStyle(allocator, zdate.locales.ja, .long);
+defer allocator.free(jp); // "2024年1月15日"
+
+// null locale defaults to en-US
+const default_style = try date.toLocaleString(allocator, null);
+defer allocator.free(default_style); // "01/15/2024, 02:30:00 PM"
 ```
 
 ### Testing with io
@@ -411,13 +374,17 @@ Z-Date is organized into modular components:
 
 - `constants.zig` — Time constants and conversions
 - `errors.zig` — Error types
-- `timezone.zig` — Timezone utilities (UTC/local)
-- `calendar.zig` — Calendar calculations (leap years, days in month)
+- `timezone.zig` — Process-wide local timezone state (host-environment model)
+- `tzdata.zig` — TZif loading (via `std.Tz`), offset lookup, POSIX TZ rules, DST disambiguation
+- `calendar.zig` — Calendar calculations (leap years, days in month, normalization)
 - `getters.zig` — Date component getters
 - `setters.zig` — Date component setters
-- `formatting.zig` — String formatting methods
-- `parsing.zig` — String parsing methods
+- `formatting.zig` — String formatting methods (incl. locale-aware styles)
+- `parsing.zig` — String parsing (strict ISO 8601 + V8-parity legacy grammar)
 - `arithmetic.zig` — Date arithmetic and comparison
+- `locale.zig` + `locales/` — `Locale` type and 145 bundled locales (one file each, lazily compiled)
+- `zones.zig` + `zones/` — 599 embedded IANA TZif zones (one lazy declaration each; generated)
+- `windows_zones.zig` — Windows↔IANA zone name mapping (CLDR data; generated)
 - `zdate.zig` — Main ZDate struct and API
 
 ## Design Decisions
@@ -449,16 +416,62 @@ Uses `std.Io.Clock.real.now(io).toMilliseconds()` for wall-clock time, integrati
 
 ### Timezone Handling
 
-- Dual mode: UTC and local timezone operations
+- The local zone is **process-wide state**, mirroring ECMA-262's model where
+  the timezone belongs to the host environment, not to each Date value — so
+  `ZDate` stays an 8-byte value type and no method signature carries a zone
 - All methods available in both UTC and local variants
-- Timezone offset detection is platform-specific
+- Backed by real IANA tzdata (TZif via `std.Tz`), not fixed offsets: historic
+  DST transitions, POSIX TZ footer rules beyond the table, and the spec's
+  local→UTC disambiguation at transitions
+- Until a zone is loaded, local == UTC (offset 0) — the behavior ECMA-262
+  prescribes for hosts without timezone data
 
 ## Compatibility
 
 - **Zig Version**: 0.16.0 or later
-- **ECMAScript**: Full Date API compatibility
+- **ECMAScript**: Full Date API compatibility (see the conformance matrix below)
 - **ISO 8601**: Complete parsing and formatting support
 - **Platforms**: Linux, macOS, Windows (all platforms supported by Zig)
+
+## ECMA-262 §21.4 Conformance Matrix
+
+Every behavior below is covered by the test suite (300+ tests), including a
+differential suite (`tests/v8_differential_test.zig`) whose expected values
+are V8's actual output — 150 random timestamps across the full ±8.64e15 range
+plus DST-transition edge cases — and ports of official test262 cases
+(`tests/test262_port_test.zig`).
+
+| Area | Status | Notes |
+|---|---|---|
+| Time range ±8.64e15 ms (TimeClip) | ✅ | Out-of-range → Invalid Date everywhere (constructors, setters, parse) |
+| Constructors: normalization (MakeDay/MakeTime) | ✅ | Month/day/time overflow rolls over, `(2024, 13, 1)` → Feb 2025; two-digit years map to 1900-1999 (MakeFullYear) |
+| Getters (`get*`/`getUTC*`) | ✅ | Return `?i32`; `null` ≡ JS `NaN` for Invalid Date |
+| `getTimezoneOffset` | ✅ | Per-date (changes across DST), `null` for Invalid Date |
+| Setters (`set*`/`setUTC*`, `setTime`) | ✅ | Invalid Date stays invalid; results clamped by TimeClip |
+| `Date.parse`: ISO 8601 (§21.4.3.2) | ✅ | Strict positional grammar; extended ±YYYYYY years; ±HH:mm offsets; date-only → UTC, date-time w/o offset → local |
+| `Date.parse`: legacy formats | ✅ | V8-parity grammar: `toString`/`toUTCString` round-trips, month names, AM/PM, `2024/01/15`, ISO-with-space, bare ±HHMM offsets, parenthesized zone names; local-time semantics as in V8 |
+| Formatting (`toISOString`, `toUTCString`, `toString`, …) | ✅ | Signed 6-digit expanded years outside [0, 9999]; test262 format cases pass |
+| `toJSON` | ✅ | `null` (not an error) for Invalid Date |
+| NaN comparison semantics | ✅ | `equals`/`before`/`after` false and `compare`/`diff*` `null` when either date is invalid |
+| Local timezone (LocalTZA) | ✅ | Real IANA tzdata via `std.Tz` (RFC 8536): system zone (TZ env, `/etc/localtime`, Windows registry name via CLDR mapping), historical DST transitions, POSIX TZ footer rules for dates beyond the table, and the spec's local-time disambiguation (tc39/ecma262#778) |
+| Annex B (`getYear`, `setYear`, `toGMTString`) | ✅ | One documented deviation: `setYear` on an Invalid Date stays invalid (spec resets to +0) |
+| `toLocale*String` | ✅* | 145 locales (Day.js data) with numeric and long (`Intl` `dateStyle: "long"`-like) styles; not CLDR/ICU-backed |
+
+**Documented deviations** (deliberate, all covered by tests):
+`null` replaces JS `NaN` throughout (Zig has no NaN-able integers);
+`setYear` on an Invalid Date does not resurrect it; `toLocale*` uses bundled
+Day.js-derived locale data rather than full CLDR. Hosts without timezone data
+run with offset 0, which ECMA-262 explicitly permits.
+
+### Timezone data
+
+- **Linux/macOS**: reads the system's tzdata (`ZDate.loadSystemTimezone`).
+- **Windows**: `GetDynamicTimeZoneInformation` → CLDR `windowsZones` mapping →
+  embedded tzdata.
+- **WASM/embedded**: 599 IANA zones vendored under `src/zones/`; each is an
+  individual lazy declaration, so referencing one zone embeds only that zone
+  (~2 KB); name-based lookup (`zones.find`, `loadEmbeddedTimezone`) opts into
+  the full database (~1.4 MB). Refresh with `scripts/update_tzdata.py`.
 
 ## Contributing
 

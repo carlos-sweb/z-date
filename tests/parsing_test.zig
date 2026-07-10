@@ -51,19 +51,19 @@ test "parse whitespace only returns INVALID_TIME" {
 test "fromISO8601 with valid full format" {
     const date = ZDate.fromISO8601("2024-12-25T15:30:45.123Z");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear());
-    try std.testing.expectEqual(@as(i32, 11), date.getUTCMonth());
-    try std.testing.expectEqual(@as(i32, 25), date.getUTCDate());
-    try std.testing.expectEqual(@as(i32, 15), date.getUTCHours());
-    try std.testing.expectEqual(@as(i32, 30), date.getUTCMinutes());
-    try std.testing.expectEqual(@as(i32, 45), date.getUTCSeconds());
-    try std.testing.expectEqual(@as(i32, 123), date.getUTCMilliseconds());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expectEqual(@as(i32, 11), date.getUTCMonth().?);
+    try std.testing.expectEqual(@as(i32, 25), date.getUTCDate().?);
+    try std.testing.expectEqual(@as(i32, 15), date.getUTCHours().?);
+    try std.testing.expectEqual(@as(i32, 30), date.getUTCMinutes().?);
+    try std.testing.expectEqual(@as(i32, 45), date.getUTCSeconds().?);
+    try std.testing.expectEqual(@as(i32, 123), date.getUTCMilliseconds().?);
 }
 
 test "fromISO8601 leap year February 29" {
     const date = ZDate.fromISO8601("2024-02-29");
     try std.testing.expect(date.isValid());
-    try std.testing.expectEqual(@as(i32, 29), date.getUTCDate());
+    try std.testing.expectEqual(@as(i32, 29), date.getUTCDate().?);
 }
 
 test "fromString with various formats" {

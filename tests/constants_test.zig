@@ -65,19 +65,3 @@ test "DAYS_IN_MONTH January is 31" {
 test "DAYS_IN_MONTH February is 28" {
     try std.testing.expectEqual(@as(i32, 28), Constants.DAYS_IN_MONTH[1]);
 }
-
-test "MONTH_NAMES has 12 elements" {
-    try std.testing.expectEqual(@as(usize, 12), Constants.MONTH_NAMES.len);
-}
-
-test "MONTH_NAMES_SHORT has 12 elements" {
-    try std.testing.expectEqual(@as(usize, 12), Constants.MONTH_NAMES_SHORT.len);
-}
-
-test "DAY_NAMES has 7 elements" {
-    try std.testing.expectEqual(@as(usize, 7), Constants.DAY_NAMES.len);
-}
-
-test "DAY_NAMES_SHORT has 7 elements" {
-    try std.testing.expectEqual(@as(usize, 7), Constants.DAY_NAMES_SHORT.len);
-}
