@@ -69,11 +69,20 @@ test "fromComponents only rejects when the final timestamp overflows the valid r
 
 // ===== Setters on Invalid Date =====
 
+test "setUTCFullYear on an Invalid Date repairs it (ECMA-262 21.4.4.27 step 2: t=NaN -> +0)" {
+    // setFullYear/setUTCFullYear are the ONE exception among the date
+    // setters: confirmed against real Node that
+    // `new Date(NaN).setUTCFullYear(2024, 0, 1)` repairs the date
+    // (getTime() becomes 1704067200000, not NaN) -- every other
+    // setter (tested below) correctly leaves an invalid date invalid.
+    var date = ZDate.fromTimestamp(Constants.INVALID_TIME);
+    const result = date.setUTCFullYear(2024, 0, 1);
+    try std.testing.expectEqual(@as(i64, 1704067200000), result);
+    try std.testing.expect(date.isValid());
+}
+
 test "setters on an Invalid Date stay Invalid Date without touching components" {
     var date = ZDate.fromTimestamp(Constants.INVALID_TIME);
-
-    try std.testing.expectEqual(Constants.INVALID_TIME, date.setUTCFullYear(2024, 0, 1));
-    try std.testing.expect(!date.isValid());
 
     try std.testing.expectEqual(Constants.INVALID_TIME, date.setUTCMonth(0, null));
     try std.testing.expect(!date.isValid());

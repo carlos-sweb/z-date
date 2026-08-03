@@ -81,11 +81,19 @@ test "setYear leaves years outside 0-99 untouched" {
     try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
 }
 
-test "setYear on an Invalid Date stays Invalid Date (deliberate deviation from Annex B.2.3)" {
+test "setYear on an Invalid Date repairs it, like setFullYear (Annex B.2.3 step 2: t=NaN -> +0)" {
+    // Previously asserted the opposite ("deliberate deviation") --
+    // confirmed against real Node that `new Date(NaN).setYear(2024)`
+    // DOES repair the date (getTime() becomes a real timestamp, not
+    // NaN), matching Annex B.2.3's own "If t is NaN, set t to +0"
+    // step. setYear delegates to the same underlying logic as
+    // setFullYear, which was fixed to do this for the exact same
+    // spec-mandated reason.
     var date = ZDate.fromTimestamp(Constants.INVALID_TIME);
     const result = date.setYear(2024);
-    try std.testing.expectEqual(Constants.INVALID_TIME, result);
-    try std.testing.expect(!date.isValid());
+    try std.testing.expectEqual(@as(i32, 2024), date.getUTCFullYear().?);
+    try std.testing.expect(result != Constants.INVALID_TIME);
+    try std.testing.expect(date.isValid());
 }
 
 test "toGMTString matches toUTCString" {

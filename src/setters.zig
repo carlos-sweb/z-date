@@ -29,12 +29,18 @@ pub const SetterMethods = struct {
         day: ?i32,
         tz_mode: TimezoneMode,
     ) i64 {
-        if (timestamp.* == Constants.INVALID_TIME) {
-            return Constants.INVALID_TIME;
-        }
+        // ECMA-262 21.4.4.27 step 2: "If t is NaN, set t to +0." --
+        // unlike every OTHER date setter (setMonth/setDate/setHours/...,
+        // which just propagate an invalid date's NaN unchanged),
+        // setFullYear alone treats an invalid date as epoch and
+        // proceeds to compute a fresh, valid timestamp from the given
+        // year (and month/day, if given). Confirmed against real Node:
+        // `new Date(NaN).setFullYear(2016)` repairs the date;
+        // `new Date(NaN).setMonth(5)` stays NaN.
+        const base_ts: i64 = if (timestamp.* == Constants.INVALID_TIME) 0 else timestamp.*;
 
-        // Get current components
-        var components = CalendarUtils.timestampToComponents(timestamp.*, tz_mode);
+        // Get current (or, if repairing, epoch) components
+        var components = CalendarUtils.timestampToComponents(base_ts, tz_mode);
 
         // Update components
         components.year = year;
