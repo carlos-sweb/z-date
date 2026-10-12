@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 
 // ===== Windows system-timezone detection =====
 // GetDynamicTimeZoneInformation is not declared in Zig's std; declared here.
-// Only referenced inside comptime-pruned `builtin.os.tag == .windows`
+// Only referenced inside comptime-pruned `builtin.target.os.tag == .windows`
 // branches, so it never affects non-Windows builds.
 
 const WinSystemTime = extern struct {
@@ -81,6 +81,8 @@ pub const PosixTz = struct {
 
     const default_transition_time_ms: i64 = 2 * Constants.MS_PER_HOUR;
 
+    /// Parse a POSIX TZ string without allocation. Returns `InvalidPosixTz`
+    /// for malformed names, offsets or transition rules.
     pub fn parse(str: []const u8) !PosixTz {
         var pos: usize = 0;
 
@@ -122,40 +124,60 @@ pub const PosixTz = struct {
         };
     }
 
-    /// Offset (ms east of UTC) in effect at `utc_ms` according to this rule.
+    const Event = struct { timestamp: i64, is_dst: bool };
+    const YearCache = struct {
+        rule: PosixTz,
+        utc_start: i64,
+        utc_end: i64,
+        events: [8]Event,
+    };
+
+    // One bounded entry per thread, keyed by rule VALUE rather than address:
+    // safe across zone replacement, stack temporaries and independent Timezones.
+    // WASM keeps the uncached calculation so this does not require TLS support.
+    threadlocal var year_cache: ?YearCache = null;
+
+    fn eventOffset(self: *const PosixTz, events: *const [8]Event, utc_ms: i64) i64 {
+        var latest: i64 = std.math.minInt(i64);
+        var is_dst = false;
+        for (events) |event| {
+            if (event.timestamp <= utc_ms and event.timestamp > latest) {
+                latest = event.timestamp;
+                is_dst = event.is_dst;
+            }
+        }
+        return if (is_dst) self.dst.?.offset_ms else self.std_offset_ms;
+    }
+
+    /// Offset (ms east of UTC) in effect at utc_ms according to this rule.
     pub fn offsetAtUtc(self: *const PosixTz, utc_ms: i64) i64 {
         const dst = self.dst orelse return self.std_offset_ms;
-
-        // Approximate local year, then scan transition events across enough
-        // adjacent years to be certain the latest event at-or-before utc_ms
-        // is among them (handles both hemispheres and year boundaries).
-        const local_year = CalendarUtils.timestampToComponents(utc_ms +| self.std_offset_ms, .utc).year;
-
-        var latest_ts: i64 = std.math.minInt(i64);
-        var latest_is_dst = false;
-        var found = false;
-
-        var y: i32 = local_year - 2;
-        while (y <= local_year + 1) : (y += 1) {
-            // DST start is expressed in standard wall-clock time; DST end in
-            // DST wall-clock time.
-            const start_utc = ruleLocalMs(dst.start, y) -| self.std_offset_ms;
-            const end_utc = ruleLocalMs(dst.end, y) -| dst.offset_ms;
-
-            if (start_utc <= utc_ms and start_utc > latest_ts) {
-                latest_ts = start_utc;
-                latest_is_dst = true;
-                found = true;
-            }
-            if (end_utc <= utc_ms and end_utc > latest_ts) {
-                latest_ts = end_utc;
-                latest_is_dst = false;
-                found = true;
+        const use_cache = builtin.target.cpu.arch != .wasm32 and builtin.target.cpu.arch != .wasm64;
+        if (use_cache) {
+            if (year_cache) |*cache| {
+                if (utc_ms >= cache.utc_start and utc_ms < cache.utc_end and std.meta.eql(cache.rule, self.*)) {
+                    return self.eventOffset(&cache.events, utc_ms);
+                }
             }
         }
 
-        if (!found) return self.std_offset_ms;
-        return if (latest_is_dst) dst.offset_ms else self.std_offset_ms;
+        const year = CalendarUtils.timestampToComponents(utc_ms +| self.std_offset_ms, .utc).year;
+        var cache: YearCache = .{
+            .rule = self.*,
+            .utc_start = CalendarUtils.componentsToTimestamp(.{ .year = year, .month = 0, .day = 1, .hour = 0, .minute = 0, .second = 0, .millisecond = 0 }, .utc) -| self.std_offset_ms,
+            .utc_end = CalendarUtils.componentsToTimestamp(.{ .year = year + 1, .month = 0, .day = 1, .hour = 0, .minute = 0, .second = 0, .millisecond = 0 }, .utc) -| self.std_offset_ms,
+            .events = undefined,
+        };
+        // Preserve the original four-year event window and tie ordering,
+        // including extended POSIX transition times and both hemispheres.
+        for (0..4) |i| {
+            const y = year - 2 + @as(i32, @intCast(i));
+            cache.events[2 * i] = .{ .timestamp = ruleLocalMs(dst.start, y) -| self.std_offset_ms, .is_dst = true };
+            cache.events[2 * i + 1] = .{ .timestamp = ruleLocalMs(dst.end, y) -| dst.offset_ms, .is_dst = false };
+        }
+        const offset = self.eventOffset(&cache.events, utc_ms);
+        if (use_cache) year_cache = cache;
+        return offset;
     }
 
     /// Wall-clock ms (relative to the epoch, no zone applied) of the rule's
@@ -324,11 +346,15 @@ pub const Timezone = struct {
         return .{ .tz = tz, .posix = posix };
     }
 
+    /// Free the parsed TZif storage using its original allocator.
+    /// Do not call after transferring ownership to ZDate.setLocalTimezone.
     pub fn deinit(self: *Timezone) void {
         self.tz.deinit();
     }
 
     /// Parse a TZif byte buffer (e.g. an @embedFile'd zone).
+    /// Allocates owned data; release with deinit or transfer to setLocalTimezone.
+    /// Propagates allocation and TZif format errors from std.Tz.parse.
     pub fn parseBytes(allocator: Allocator, data: []const u8) !Timezone {
         var reader: std.Io.Reader = .fixed(data);
         const tz = try std.Tz.parse(allocator, &reader);
@@ -348,7 +374,9 @@ pub const Timezone = struct {
     }
 
     /// Load a named IANA zone (e.g. "America/Santiago") from the system
-    /// tzdata directory.
+    /// tzdata directory. Allocates owned data; release with deinit.
+    /// Returns InvalidTimezoneName for empty/absolute/traversing names,
+    /// NoSpaceLeft for an oversized path, or file/parse/allocation errors.
     pub fn loadNamed(allocator: Allocator, io: std.Io, name: []const u8) !Timezone {
         // Reject anything that could escape the zoneinfo directory.
         if (name.len == 0 or name[0] == '/' or std.mem.indexOf(u8, name, "..") != null) {
@@ -377,7 +405,7 @@ pub const Timezone = struct {
     /// caller may treat that as "no timezone data" (offset 0, which ECMA-262
     /// explicitly permits).
     pub fn loadSystem(allocator: Allocator, io: std.Io, environ: ?std.process.Environ) !Timezone {
-        if (builtin.os.tag == .windows) {
+        if (builtin.target.os.tag == .windows) {
             return loadSystemWindows(allocator);
         }
 
@@ -413,7 +441,7 @@ pub const Timezone = struct {
     }
 
     fn getTzEnv(environ: std.process.Environ) ?[]const u8 {
-        if (builtin.os.tag == .windows) return null;
+        if (builtin.target.os.tag == .windows) return null;
         const raw = environ.getPosix("TZ") orelse return null;
         // POSIX allows a leading ':' before an implementation-defined name.
         return if (raw.len > 0 and raw[0] == ':') raw[1..] else raw;

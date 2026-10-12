@@ -1,6 +1,6 @@
 # Z-Date
 
-**Biblioteca de Fecha/Hora compatible con ECMAScript para Zig 0.16**
+**Biblioteca de Fecha/Hora compatible con ECMAScript para Zig 0.17**
 
 Z-Date es una biblioteca completa de fecha y hora para Zig que implementa la especificación completa de la API Date de JavaScript (ECMA-262 §21.4). Su conformidad no es aspiracional: la suite de tests incluye una suite diferencial cuyos valores esperados son **la salida real de V8**, más ports de casos oficiales de **test262**. Consulta la [matriz de conformidad](#matriz-de-conformidad-ecma-262-214) para el alcance método por método y las pocas desviaciones documentadas.
 
@@ -13,11 +13,14 @@ Z-Date es una biblioteca completa de fecha y hora para Zig que implementa la esp
 - **Rango amplio**: ±273.785 años desde la época Unix (±8.64e15 ms), aritmética segura contra overflow
 - **Value type puro**: `ZDate` es un struct puro de 8 bytes — sin allocator ni io almacenados internamente
 - **Más de 300 tests**, incluyendo fuzzing de los parsers y casos límite de TimeClip/overflow
-- **Nativo de Zig 0.16**: usa `std.Io.Clock` para obtener la hora
+- **Nativo de Zig 0.17**: usa `std.Io.Clock` para obtener la hora
 
 ## Requisitos
 
-- Zig 0.16.0 o superior
+- Zig 0.17.0 o superior
+
+Los modos de optimización de Zig 0.17 son `debug`, `safe`, `fast` y `small`;
+por ejemplo, usa `zig build test -Doptimize=fast` para probar la biblioteca optimizada.
 
 ## Instalación
 
@@ -405,9 +408,9 @@ Z-Date está organizada en componentes modulares:
 - Rango: ±273.785 años desde la época (±8.64e15 milisegundos)
 - Fechas inválidas representadas por `std.math.maxInt(i64)`
 
-### API de Reloj de Zig 0.16
+### API de Reloj de Zig 0.17
 
-Usa `std.Io.Clock.real.now(io).toMilliseconds()` para la hora de pared, integrándose limpiamente con el sistema unificado de backends de I/O de Zig 0.16 (`std.Io.Threaded`, `std.Io.Evented`).
+Usa `std.Io.Clock.real.now(io).toMilliseconds()` para la hora de pared, integrándose limpiamente con el sistema unificado de backends de I/O de Zig 0.17 (`std.Io.Threaded`, `std.Io.Evented`).
 
 ### Estrategia de Errores
 
@@ -428,9 +431,26 @@ Usa `std.Io.Clock.real.now(io).toMilliseconds()` para la hora de pared, integrá
 - Hasta que se carga una zona, local == UTC (offset 0) — el comportamiento que
   ECMA-262 prescribe para hosts sin datos de zona horaria
 
+## Comparación de rendimiento
+
+El código de Zig 0.17 anterior a las optimizaciones se conserva en
+`benchmarks/baseline-zig-0.17.tar.gz`, con un manifiesto SHA-256. `zig build test`
+incluye pruebas diferenciales contra esa copia; esas pruebas y los benchmarks
+requieren Python 3 para extraer y verificar el archivo.
+
+Ejecuta `python3 scripts/benchmark.py --runs 3 --mode fast`. El script fija una CPU
+en Linux, calienta ambas versiones, alterna el orden, verifica checksums y guarda
+muestras crudas y medianas en `benchmarks/results-fast.{csv,json,md}`. Usa
+`--mode safe` para medir con comprobaciones de seguridad.
+`zig build benchmark -Doptimize=fast` ejecuta un proceso e imprime las muestras.
+
+La caché POSIX almacena una regla/año por hilo, sin asignaciones dinámicas; compara
+los valores de las reglas para impedir reutilizar datos de una zona reemplazada.
+WASM conserva el cálculo sin caché. ZDate continúa siendo un valor de 8 bytes.
+
 ## Compatibilidad
 
-- **Versión de Zig**: 0.16.0 o superior
+- **Versión de Zig**: 0.17.0 o superior
 - **ECMAScript**: compatibilidad completa con la API Date (ver la matriz de conformidad)
 - **ISO 8601**: soporte completo de parseo y formateo
 - **Plataformas**: Linux, macOS, Windows (todas las plataformas soportadas por Zig)
@@ -499,4 +519,4 @@ Para la documentación en inglés, consulta [README.md](README.md).
 
 ---
 
-**Z-Date** — Construido con Zig 0.16 para motores JavaScript de alto rendimiento
+**Z-Date** — Construido con Zig 0.17 para motores JavaScript de alto rendimiento

@@ -1,0 +1,5 @@
+{
+  "description": "C\u00f3digo migrado a Zig 0.17 antes de optimizar; 304 tests pasan.",
+  "sha256": "29251b4f30f46c095b6b37e7d2f62d5c8a1b385505c899b156353dc0b9311fd7",
+  "archive": "baseline-zig-0.17.tar.gz"
+}

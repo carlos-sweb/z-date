@@ -15,8 +15,8 @@ test "force-analyze every registered locale: valid shape, no empty fields" {
     @setEvalBranchQuota(1_000_000);
     const info = @typeInfo(locales).@"struct";
     var count: usize = 0;
-    inline for (info.decls) |decl| {
-        const loc: zdate.Locale = @field(locales, decl.name);
+    inline for (info.decl_names) |decl_name| {
+        const loc: zdate.Locale = @field(locales, decl_name);
         inline for (loc.month_names) |m| try std.testing.expect(m.len > 0);
         inline for (loc.month_names_short) |m| try std.testing.expect(m.len > 0);
         inline for (loc.day_names) |d| try std.testing.expect(d.len > 0);

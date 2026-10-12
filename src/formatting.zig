@@ -171,14 +171,14 @@ pub const FormattingMethods = struct {
 
         // Format: "Day Mon DD YYYY"
         // Example: "Mon Jan 01 2024"
-        const components = CalendarUtils.timestampToComponents(timestamp, .local);
-        const day_of_week = CalendarUtils.getDayOfWeek(components.year, components.month, components.day);
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, .local);
+        const components = CalendarUtils.timestampToComponents(adjusted, .utc);
+        const day_of_week = @as(i32, @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_DAY) + 4, 7)));
 
         var year_buf: [11]u8 = undefined;
         const year_str = formatYear(&year_buf, components.year, 4);
 
-        return try std.fmt.allocPrint(
-            allocator,
+        return try allocator.print(
             "{s} {s} {d:0>2} {s}",
             .{
                 en_us.day_names_short[@intCast(day_of_week)],
@@ -196,10 +196,9 @@ pub const FormattingMethods = struct {
         }
 
         // Format: "HH:MM:SS GMT+0000 (Timezone Name)"
-        const components = CalendarUtils.timestampToComponents(timestamp, .local);
+        const components = timeComponents(timestamp);
 
-        return try std.fmt.allocPrint(
-            allocator,
+        return try allocator.print(
             "{d:0>2}:{d:0>2}:{d:0>2} GMT+0000",
             .{
                 nn(components.hour),
@@ -216,14 +215,14 @@ pub const FormattingMethods = struct {
         }
 
         // Format: "Day Mon DD YYYY HH:MM:SS GMT+0000"
-        const components = CalendarUtils.timestampToComponents(timestamp, .local);
-        const day_of_week = CalendarUtils.getDayOfWeek(components.year, components.month, components.day);
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, .local);
+        const components = CalendarUtils.timestampToComponents(adjusted, .utc);
+        const day_of_week = @as(i32, @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_DAY) + 4, 7)));
 
         var year_buf: [11]u8 = undefined;
         const year_str = formatYear(&year_buf, components.year, 4);
 
-        return try std.fmt.allocPrint(
-            allocator,
+        return try allocator.print(
             "{s} {s} {d:0>2} {s} {d:0>2}:{d:0>2}:{d:0>2} GMT+0000",
             .{
                 en_us.day_names_short[@intCast(day_of_week)],
@@ -246,13 +245,12 @@ pub const FormattingMethods = struct {
         // Format: "Day, DD Mon YYYY HH:MM:SS GMT"
         // Example: "Mon, 01 Jan 2024 00:00:00 GMT"
         const components = CalendarUtils.timestampToComponents(timestamp, .utc);
-        const day_of_week = CalendarUtils.getDayOfWeek(components.year, components.month, components.day);
+        const day_of_week = @as(i32, @intCast(@mod(@divFloor(timestamp, Constants.MS_PER_DAY) + 4, 7)));
 
         var year_buf: [11]u8 = undefined;
         const year_str = formatYear(&year_buf, components.year, 4);
 
-        return try std.fmt.allocPrint(
-            allocator,
+        return try allocator.print(
             "{s}, {d:0>2} {s} {s} {d:0>2}:{d:0>2}:{d:0>2} GMT",
             .{
                 en_us.day_names_short[@intCast(day_of_week)],
@@ -287,51 +285,104 @@ pub const FormattingMethods = struct {
     /// the numeric-vs-long distinction of Intl.DateTimeFormat's dateStyle.
     pub const DateStyle = enum { numeric, long };
 
-    /// Render a long-style date from the locale's pattern (see
-    /// Locale.long_date_format for the token grammar).
-    fn formatLongDate(allocator: Allocator, l: Locale, components: anytype) ![]u8 {
-        const pattern = if (l.long_date_format.len > 0)
-            l.long_date_format
-        else switch (l.date_order) {
+    fn timeComponents(timestamp: i64) calendar.DateComponents {
+        const ms = @mod(timezone.TimezoneUtils.applyTimezoneOffset(timestamp, .local), Constants.MS_PER_DAY);
+        return .{
+            .year = 1970,
+            .month = 0,
+            .day = 1,
+            .hour = @intCast(@divTrunc(ms, Constants.MS_PER_HOUR)),
+            .minute = @intCast(@mod(@divTrunc(ms, Constants.MS_PER_MINUTE), 60)),
+            .second = @intCast(@mod(@divTrunc(ms, Constants.MS_PER_SECOND), 60)),
+            .millisecond = @intCast(@mod(ms, 1000)),
+        };
+    }
+
+    fn writeLongDate(w: *std.Io.Writer, l: Locale, c: calendar.DateComponents) !void {
+        const pattern = if (l.long_date_format.len > 0) l.long_date_format else switch (l.date_order) {
             .dmy => "D MMMM YYYY",
             .mdy => "MMMM D, YYYY",
             .ymd => "YYYY MMMM D",
         };
-
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(allocator);
-
         var i: usize = 0;
         while (i < pattern.len) {
             if (std.mem.startsWith(u8, pattern[i..], "YYYY")) {
-                var year_buf: [11]u8 = undefined;
-                try out.appendSlice(allocator, formatYear(&year_buf, components.year, 1));
+                var buf: [11]u8 = undefined;
+                try w.writeAll(formatYear(&buf, c.year, 1));
                 i += 4;
             } else if (std.mem.startsWith(u8, pattern[i..], "MMMM")) {
-                try out.appendSlice(allocator, l.month_names[@intCast(components.month)]);
+                try w.writeAll(l.month_names[@intCast(c.month)]);
                 i += 4;
             } else if (std.mem.startsWith(u8, pattern[i..], "MMM")) {
-                try out.appendSlice(allocator, l.month_names_short[@intCast(components.month)]);
+                try w.writeAll(l.month_names_short[@intCast(c.month)]);
                 i += 3;
             } else if (std.mem.startsWith(u8, pattern[i..], "MM")) {
-                try out.print(allocator, "{d:0>2}", .{nn(components.month + 1)});
+                try w.print("{d:0>2}", .{nn(c.month + 1)});
                 i += 2;
             } else if (pattern[i] == 'M') {
-                try out.print(allocator, "{d}", .{nn(components.month + 1)});
+                try w.print("{d}", .{nn(c.month + 1)});
                 i += 1;
             } else if (std.mem.startsWith(u8, pattern[i..], "DD")) {
-                try out.print(allocator, "{d:0>2}", .{nn(components.day)});
+                try w.print("{d:0>2}", .{nn(c.day)});
                 i += 2;
             } else if (pattern[i] == 'D') {
-                try out.print(allocator, "{d}", .{nn(components.day)});
+                try w.print("{d}", .{nn(c.day)});
                 i += 1;
             } else {
-                try out.append(allocator, pattern[i]);
+                try w.writeByte(pattern[i]);
                 i += 1;
             }
         }
+    }
 
-        return out.toOwnedSlice(allocator);
+    fn writeNumericDate(w: *std.Io.Writer, l: Locale, c: calendar.DateComponents) !void {
+        var buf: [11]u8 = undefined;
+        const year = formatYear(&buf, c.year, 4);
+        const month = nn(c.month + 1);
+        const day = nn(c.day);
+        const sep = l.date_separator;
+        switch (l.date_order) {
+            .mdy => try w.print("{d:0>2}{c}{d:0>2}{c}{s}", .{ month, sep, day, sep, year }),
+            .dmy => try w.print("{d:0>2}{c}{d:0>2}{c}{s}", .{ day, sep, month, sep, year }),
+            .ymd => try w.print("{s}{c}{d:0>2}{c}{d:0>2}", .{ year, sep, month, sep, day }),
+        }
+    }
+
+    fn writeTime(w: *std.Io.Writer, l: Locale, c: calendar.DateComponents) !void {
+        const sep = l.time_separator;
+        if (l.time_24h) {
+            try w.print("{d:0>2}{c}{d:0>2}{c}{d:0>2}", .{ nn(c.hour), sep, nn(c.minute), sep, nn(c.second) });
+        } else {
+            const hour = if (@mod(c.hour, 12) == 0) 12 else @mod(c.hour, 12);
+            const label = if (c.hour < 12) l.am_label else l.pm_label;
+            try w.print("{d:0>2}{c}{d:0>2}{c}{d:0>2} {s}", .{ nn(hour), sep, nn(c.minute), sep, nn(c.second), label });
+        }
+    }
+
+    fn renderLocale(w: *std.Io.Writer, l: Locale, c: calendar.DateComponents, style: DateStyle, comptime date: bool, comptime time: bool) !void {
+        if (date) {
+            if (style == .long) try writeLongDate(w, l, c) else try writeNumericDate(w, l, c);
+        }
+        if (date and time) try w.writeAll(", ");
+        if (time) try writeTime(w, l, c);
+    }
+
+    // One heap allocation in the common case. Arbitrarily long caller-supplied
+    // patterns and labels use a counted, exactly-sized fallback, never truncation.
+    fn allocLocale(allocator: Allocator, l: Locale, c: calendar.DateComponents, style: DateStyle, comptime date: bool, comptime time: bool) ![]u8 {
+        var buf: [256]u8 = undefined;
+        var w = std.Io.Writer.fixed(&buf);
+        if (renderLocale(&w, l, c, style, date, time)) |_| {
+            return allocator.dupe(u8, w.buffered());
+        } else |_| {
+            var count_buf: [64]u8 = undefined;
+            var counter = std.Io.Writer.Discarding.init(&count_buf);
+            renderLocale(&counter.writer, l, c, style, date, time) catch unreachable;
+            const out = try allocator.alloc(u8, @intCast(counter.fullCount()));
+            var exact = std.Io.Writer.fixed(out);
+            renderLocale(&exact, l, c, style, date, time) catch unreachable;
+            return out;
+        }
     }
 
     /// toLocaleDateString with an explicit style (.numeric matches
@@ -346,22 +397,15 @@ pub const FormattingMethods = struct {
 
         const l = loc orelse en_us;
         const components = CalendarUtils.timestampToComponents(timestamp, .local);
-        return formatLongDate(allocator, l, components);
+        return allocLocale(allocator, l, components, .long, true, false);
     }
 
     /// toLocaleString with an explicit date style; the time part is always
     /// rendered per the locale's clock settings.
     pub fn toLocaleStringStyle(timestamp: i64, allocator: Allocator, loc: ?Locale, style: DateStyle) ![]u8 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return try allocator.dupe(u8, "Invalid Date");
-        }
-
-        const date_str = try toLocaleDateStringStyle(timestamp, allocator, loc, style);
-        defer allocator.free(date_str);
-        const time_str = try toLocaleTimeString(timestamp, allocator, loc);
-        defer allocator.free(time_str);
-
-        return try std.fmt.allocPrint(allocator, "{s}, {s}", .{ date_str, time_str });
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return allocator.dupe(u8, "Invalid Date");
+        const c = CalendarUtils.timestampToComponents(timestamp, .local);
+        return allocLocale(allocator, loc orelse en_us, c, style, true, true);
     }
 
     /// Format to locale date string, honoring the locale's date_order and date_separator.
@@ -381,53 +425,21 @@ pub const FormattingMethods = struct {
         const year_str = formatYear(&year_buf, components.year, 4);
 
         return switch (l.date_order) {
-            .mdy => try std.fmt.allocPrint(allocator, "{d:0>2}{c}{d:0>2}{c}{s}", .{ month, sep, day, sep, year_str }),
-            .dmy => try std.fmt.allocPrint(allocator, "{d:0>2}{c}{d:0>2}{c}{s}", .{ day, sep, month, sep, year_str }),
-            .ymd => try std.fmt.allocPrint(allocator, "{s}{c}{d:0>2}{c}{d:0>2}", .{ year_str, sep, month, sep, day }),
+            .mdy => try allocator.print("{d:0>2}{c}{d:0>2}{c}{s}", .{ month, sep, day, sep, year_str }),
+            .dmy => try allocator.print("{d:0>2}{c}{d:0>2}{c}{s}", .{ day, sep, month, sep, year_str }),
+            .ymd => try allocator.print("{s}{c}{d:0>2}{c}{d:0>2}", .{ year_str, sep, month, sep, day }),
         };
     }
 
     /// Format to locale time string, honoring the locale's time_24h/am_label/pm_label.
     /// A null locale defaults to en-US (12-hour clock with AM/PM).
     pub fn toLocaleTimeString(timestamp: i64, allocator: Allocator, loc: ?Locale) ![]u8 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return try allocator.dupe(u8, "Invalid Date");
-        }
-
-        const l = loc orelse en_us;
-        const components = CalendarUtils.timestampToComponents(timestamp, .local);
-
-        const sep = l.time_separator;
-        if (l.time_24h) {
-            return try std.fmt.allocPrint(
-                allocator,
-                "{d:0>2}{c}{d:0>2}{c}{d:0>2}",
-                .{ nn(components.hour), sep, nn(components.minute), sep, nn(components.second) },
-            );
-        }
-
-        var hour12 = @mod(components.hour, 12);
-        if (hour12 == 0) hour12 = 12;
-        const meridiem = if (components.hour < 12) l.am_label else l.pm_label;
-
-        return try std.fmt.allocPrint(
-            allocator,
-            "{d:0>2}{c}{d:0>2}{c}{d:0>2} {s}",
-            .{ nn(hour12), sep, nn(components.minute), sep, nn(components.second), meridiem },
-        );
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return allocator.dupe(u8, "Invalid Date");
+        return allocLocale(allocator, loc orelse en_us, timeComponents(timestamp), .numeric, false, true);
     }
 
     /// Format to locale string (date + time). A null locale defaults to en-US.
     pub fn toLocaleString(timestamp: i64, allocator: Allocator, loc: ?Locale) ![]u8 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return try allocator.dupe(u8, "Invalid Date");
-        }
-
-        const date_str = try toLocaleDateString(timestamp, allocator, loc);
-        defer allocator.free(date_str);
-        const time_str = try toLocaleTimeString(timestamp, allocator, loc);
-        defer allocator.free(time_str);
-
-        return try std.fmt.allocPrint(allocator, "{s}, {s}", .{ date_str, time_str });
+        return toLocaleStringStyle(timestamp, allocator, loc, .numeric);
     }
 };

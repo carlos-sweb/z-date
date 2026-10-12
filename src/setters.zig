@@ -101,19 +101,17 @@ pub const SetterMethods = struct {
         ms: ?i32,
         tz_mode: TimezoneMode,
     ) i64 {
-        if (timestamp.* == Constants.INVALID_TIME) {
-            return Constants.INVALID_TIME;
-        }
-
-        var components = CalendarUtils.timestampToComponents(timestamp.*, tz_mode);
-        components.hour = hour;
-        if (min) |m| components.minute = m;
-        if (sec) |s| components.second = s;
-        if (ms) |millisecond| components.millisecond = millisecond;
-
-        CalendarUtils.normalizeComponents(&components);
-
-        return finalize(timestamp, CalendarUtils.componentsToTimestamp(components, tz_mode));
+        if (CalendarUtils.isInvalidTimestamp(timestamp.*)) return Constants.INVALID_TIME;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp.*, tz_mode);
+        const in_day = @mod(adjusted, Constants.MS_PER_DAY);
+        const midnight = adjusted - in_day;
+        // Every i32 component product and their sum fit i64, even at TimeClip's limits.
+        const computed = midnight +
+            @as(i64, hour) * Constants.MS_PER_HOUR +
+            @as(i64, min orelse @as(i32, @intCast(@mod(@divTrunc(in_day, Constants.MS_PER_MINUTE), 60)))) * Constants.MS_PER_MINUTE +
+            @as(i64, sec orelse @as(i32, @intCast(@mod(@divTrunc(in_day, Constants.MS_PER_SECOND), 60)))) * Constants.MS_PER_SECOND +
+            @as(i64, ms orelse @as(i32, @intCast(@mod(in_day, 1000)))) * 1;
+        return finalize(timestamp, timezone.TimezoneUtils.removeTimezoneOffset(computed, tz_mode));
     }
 
     /// Set minutes component
@@ -124,18 +122,17 @@ pub const SetterMethods = struct {
         ms: ?i32,
         tz_mode: TimezoneMode,
     ) i64 {
-        if (timestamp.* == Constants.INVALID_TIME) {
-            return Constants.INVALID_TIME;
-        }
-
-        var components = CalendarUtils.timestampToComponents(timestamp.*, tz_mode);
-        components.minute = min;
-        if (sec) |s| components.second = s;
-        if (ms) |millisecond| components.millisecond = millisecond;
-
-        CalendarUtils.normalizeComponents(&components);
-
-        return finalize(timestamp, CalendarUtils.componentsToTimestamp(components, tz_mode));
+        if (CalendarUtils.isInvalidTimestamp(timestamp.*)) return Constants.INVALID_TIME;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp.*, tz_mode);
+        const in_day = @mod(adjusted, Constants.MS_PER_DAY);
+        const midnight = adjusted - in_day;
+        // Every i32 component product and their sum fit i64, even at TimeClip's limits.
+        const computed = midnight +
+            @mod(@divTrunc(in_day, Constants.MS_PER_HOUR), 24) * Constants.MS_PER_HOUR +
+            @as(i64, min) * Constants.MS_PER_MINUTE +
+            @as(i64, sec orelse @as(i32, @intCast(@mod(@divTrunc(in_day, Constants.MS_PER_SECOND), 60)))) * Constants.MS_PER_SECOND +
+            @as(i64, ms orelse @as(i32, @intCast(@mod(in_day, 1000)))) * 1;
+        return finalize(timestamp, timezone.TimezoneUtils.removeTimezoneOffset(computed, tz_mode));
     }
 
     /// Set seconds component
@@ -145,17 +142,17 @@ pub const SetterMethods = struct {
         ms: ?i32,
         tz_mode: TimezoneMode,
     ) i64 {
-        if (timestamp.* == Constants.INVALID_TIME) {
-            return Constants.INVALID_TIME;
-        }
-
-        var components = CalendarUtils.timestampToComponents(timestamp.*, tz_mode);
-        components.second = sec;
-        if (ms) |millisecond| components.millisecond = millisecond;
-
-        CalendarUtils.normalizeComponents(&components);
-
-        return finalize(timestamp, CalendarUtils.componentsToTimestamp(components, tz_mode));
+        if (CalendarUtils.isInvalidTimestamp(timestamp.*)) return Constants.INVALID_TIME;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp.*, tz_mode);
+        const in_day = @mod(adjusted, Constants.MS_PER_DAY);
+        const midnight = adjusted - in_day;
+        // Every i32 component product and their sum fit i64, even at TimeClip's limits.
+        const computed = midnight +
+            @mod(@divTrunc(in_day, Constants.MS_PER_HOUR), 24) * Constants.MS_PER_HOUR +
+            @mod(@divTrunc(in_day, Constants.MS_PER_MINUTE), 60) * Constants.MS_PER_MINUTE +
+            @as(i64, sec) * Constants.MS_PER_SECOND +
+            @as(i64, ms orelse @as(i32, @intCast(@mod(in_day, 1000)))) * 1;
+        return finalize(timestamp, timezone.TimezoneUtils.removeTimezoneOffset(computed, tz_mode));
     }
 
     /// Set milliseconds component
@@ -164,16 +161,17 @@ pub const SetterMethods = struct {
         ms: i32,
         tz_mode: TimezoneMode,
     ) i64 {
-        if (timestamp.* == Constants.INVALID_TIME) {
-            return Constants.INVALID_TIME;
-        }
-
-        var components = CalendarUtils.timestampToComponents(timestamp.*, tz_mode);
-        components.millisecond = ms;
-
-        CalendarUtils.normalizeComponents(&components);
-
-        return finalize(timestamp, CalendarUtils.componentsToTimestamp(components, tz_mode));
+        if (CalendarUtils.isInvalidTimestamp(timestamp.*)) return Constants.INVALID_TIME;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp.*, tz_mode);
+        const in_day = @mod(adjusted, Constants.MS_PER_DAY);
+        const midnight = adjusted - in_day;
+        // Every i32 component product and their sum fit i64, even at TimeClip's limits.
+        const computed = midnight +
+            @mod(@divTrunc(in_day, Constants.MS_PER_HOUR), 24) * Constants.MS_PER_HOUR +
+            @mod(@divTrunc(in_day, Constants.MS_PER_MINUTE), 60) * Constants.MS_PER_MINUTE +
+            @mod(@divTrunc(in_day, Constants.MS_PER_SECOND), 60) * Constants.MS_PER_SECOND +
+            @as(i64, ms) * 1;
+        return finalize(timestamp, timezone.TimezoneUtils.removeTimezoneOffset(computed, tz_mode));
     }
 
     /// Set timestamp directly (Date.prototype.setTime semantics: out-of-range → Invalid Date)
@@ -186,12 +184,7 @@ pub const SetterMethods = struct {
     /// behaves like setFullYear(). Local time only (there is no UTC variant
     /// in the spec).
     ///
-    /// Deviates from Annex B.2.3 in one respect: the spec resets an Invalid
-    /// Date to epoch (+0) before applying the year, so setYear can make an
-    /// invalid Date valid again. This library keeps its usual "Invalid Date
-    /// stays Invalid Date" rule (shared by every other setter, via
-    /// setFullYear's own guard) instead, to avoid that surprising
-    /// invalid-becomes-valid side effect.
+    /// Like setFullYear, repairs Invalid Date by using epoch as the base.
     pub fn setYear(timestamp: *i64, year: i32, tz_mode: TimezoneMode) i64 {
         const full_year = if (year >= 0 and year <= 99) 1900 + year else year;
         return setFullYear(timestamp, full_year, null, null, tz_mode);

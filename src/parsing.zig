@@ -38,7 +38,10 @@ pub const ParsingMethods = struct {
     /// Date-only forms are interpreted as UTC; date-time forms without an explicit
     /// offset are interpreted as local time (per spec).
     pub fn parseISO8601(str: []const u8) !i64 {
-        const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
+        return parseISOTrimmed(std.mem.trim(u8, str, &std.ascii.whitespace));
+    }
+
+    fn parseISOTrimmed(trimmed: []const u8) !i64 {
         if (trimmed.len == 0) return ZDateError.InvalidFormat;
 
         var pos: usize = 0;
@@ -172,25 +175,29 @@ pub const ParsingMethods = struct {
 
     /// Parse various date string formats
     pub fn parse(str: []const u8) i64 {
-        // Try ISO 8601 first
-        if (parseISO8601(str)) |timestamp| {
-            return timestamp;
-        } else |_| {}
+        const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
+        if (trimmed.len == 0) return Constants.INVALID_TIME;
+        // Alphabetic legacy forms cannot match either ISO parser.
+        if (std.ascii.isDigit(trimmed[0]) or trimmed[0] == '+' or trimmed[0] == '-') {
+            if (parseISOTrimmed(trimmed)) |timestamp| {
+                return timestamp;
+            } else |_| {}
 
-        // ISO with a space instead of 'T' ("2024-01-15 10:30:00"), a legacy
-        // form V8 accepts with local-time semantics.
-        if (parseIsoWithSpace(str)) |timestamp| {
-            return timestamp;
-        } else |_| {}
+            // ISO with a space instead of 'T' ("2024-01-15 10:30:00"), a legacy
+            // form V8 accepts with local-time semantics.
+            if (parseIsoWithSpace(trimmed)) |timestamp| {
+                return timestamp;
+            } else |_| {}
+        }
 
         // Try other common formats
         // Format: "Mon Jan 01 2024"
-        if (parseDateString(str)) |timestamp| {
+        if (parseDateString(trimmed)) |timestamp| {
             return timestamp;
         } else |_| {}
 
         // Format: "01/01/2024", "1/1/2024" or "2024/01/15"
-        if (parseSlashFormat(str)) |timestamp| {
+        if (parseSlashFormat(trimmed)) |timestamp| {
             return timestamp;
         } else |_| {}
 
@@ -201,8 +208,7 @@ pub const ParsingMethods = struct {
     /// "YYYY-MM-DD HH:mm[:ss]" - rewritten to the ISO 'T' form and delegated
     /// to the strict ISO parser (which gives date-time-without-offset the
     /// local-time semantics V8 uses for this form).
-    fn parseIsoWithSpace(str: []const u8) !i64 {
-        const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
+    fn parseIsoWithSpace(trimmed: []const u8) !i64 {
         if (trimmed.len > 63) return ZDateError.InvalidFormat;
 
         const space_idx = std.mem.indexOfScalar(u8, trimmed, ' ') orelse return ZDateError.InvalidFormat;
@@ -213,7 +219,7 @@ pub const ParsingMethods = struct {
         var buf: [64]u8 = undefined;
         @memcpy(buf[0..trimmed.len], trimmed);
         buf[space_idx] = 'T';
-        return parseISO8601(buf[0..trimmed.len]);
+        return parseISOTrimmed(buf[0..trimmed.len]);
     }
 
     /// Parse a signed ±HHMM offset (exactly 5 characters, e.g. "+0000",
@@ -248,9 +254,7 @@ pub const ParsingMethods = struct {
     ///
     /// Forms without an explicit offset are local time (as in V8); forms
     /// with GMT/UTC/±HHMM are absolute.
-    fn parseDateString(str: []const u8) !i64 {
-        const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
-
+    fn parseDateString(trimmed: []const u8) !i64 {
         var token_buf: [12][]const u8 = undefined;
         var token_count: usize = 0;
         var iter = std.mem.tokenizeAny(u8, trimmed, " \t");
@@ -388,8 +392,7 @@ pub const ParsingMethods = struct {
 
     /// Parse slash formats: "MM/DD/YYYY" (US order) or "YYYY/MM/DD" (when
     /// the first component has 3+ digits). Local-time semantics, per V8.
-    fn parseSlashFormat(str: []const u8) !i64 {
-        const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
+    fn parseSlashFormat(trimmed: []const u8) !i64 {
 
         // Split by slash
         var iter = std.mem.splitScalar(u8, trimmed, '/');

@@ -1,8 +1,10 @@
 # Z-Date
 
-**ECMAScript-compatible Date/Time Library for Zig 0.16**
+**ECMAScript-compatible Date/Time Library for Zig 0.17 · v0.1.0**
 
-Z-Date is a comprehensive date and time library for Zig that implements the full JavaScript Date API specification (ECMA-262 §21.4). Its conformance is not aspirational: the test suite includes a differential suite whose expected values are **V8's actual output**, plus ports of official **test262** cases. See the [conformance matrix](#ecma-262-214-conformance-matrix) for the method-by-method scope and the few documented deviations.
+[API reference](https://carlos-sweb.github.io/z-date/) · [Release](https://github.com/carlos-sweb/z-date/releases/tag/v0.1.0) · [Benchmark results](benchmarks/results-fast.md)
+
+Z-Date is a comprehensive date and time library for Zig that provides the JavaScript Date API surface (ECMA-262 §21.4). The test suite includes a differential suite whose expected values are **V8's actual output**, plus ports of official **test262** cases. See the [conformance matrix](#ecma-262-214-conformance-matrix) for the method-by-method scope and the few documented deviations.
 
 ## Features
 
@@ -10,30 +12,27 @@ Z-Date is a comprehensive date and time library for Zig that implements the full
 - **Real IANA timezone support**: system tzdata on Linux/macOS, Windows registry + CLDR mapping, 599 embeddable zones for WASM/embedded; historical DST transitions, POSIX TZ rules for far-future dates, and spec-mandated DST disambiguation
 - **145 locales** (Day.js data) with numeric and long (`Intl`-like) date styles, lazily compiled — referencing one locale embeds only that locale
 - **ISO 8601**: strict §21.4.3.2 grammar, extended ±YYYYYY years, plus V8-parity legacy parse formats
-- **Wide Range**: ±273,785 years from Unix epoch (±8.64e15 ms), overflow-safe arithmetic
+- **Wide Range**: ±273,785 years from Unix epoch (±8.64e15 ms), TimeClip-clamped constructors and calendar normalization
 - **Pure Value Type**: `ZDate` is a pure 8-byte struct — no allocator or io stored internally
-- **300+ tests**, including fuzzing of the parsers and TimeClip/overflow edge cases
-- **Zig 0.16 Native**: Uses `std.Io.Clock` for time acquisition
+- **310 tests**, including fuzzing of the parsers and TimeClip/overflow edge cases
+- **Zig 0.17 Native**: Uses `std.Io.Clock` for time acquisition
 
 ## Requirements
 
-- Zig 0.16.0 or later
+- Zig 0.17.0 or later
+
+Zig 0.17 optimization modes are `debug`, `safe`, `fast`, and `small`; for example,
+run `zig build test -Doptimize=fast` to test the optimized library.
 
 ## Installation
 
-Add Z-Date to your `build.zig.zon`:
+Add the versioned dependency from your project directory:
 
-```zig
-.{
-    .name = "my-project",
-    .version = "0.1.0",
-    .dependencies = .{
-        .zdate = .{
-            .url = "https://github.com/yourusername/z-date/archive/main.tar.gz",
-        },
-    },
-}
+```bash
+zig fetch --save=zdate https://github.com/carlos-sweb/z-date/archive/refs/tags/v0.1.0.tar.gz
 ```
+
+Zig writes the dependency URL and its verified package hash to `build.zig.zon`.
 
 Then in your `build.zig`:
 
@@ -105,9 +104,19 @@ This keeps every `ZDate` instance lightweight and suitable for use in JS engine 
 
 ## API Overview
 
-The full, always-current API reference is generated from the source doc
-comments: run `zig build docs` and open `zig-out/docs/index.html`. Summary of
-the surface:
+Browse the [generated API reference](https://carlos-sweb.github.io/z-date/),
+including signatures, parameters, errors and source links. It is rebuilt from
+Zig doc comments after each push to `master`.
+
+To browse locally, run `zig build docs`, then serve the generated files:
+
+```bash
+python3 -m http.server 8000 --directory zig-out/docs
+```
+
+Open http://localhost:8000/. The generated reference uses JavaScript and WebAssembly
+to load its source archive, so serve it over HTTP rather than opening a `file://` URL.
+See [DOCS.md](DOCS.md) for the build/publishing workflow. Summary of the surface:
 
 | Group | Methods | Notes |
 |---|---|---|
@@ -115,7 +124,7 @@ the surface:
 | Constructors | `fromTimestamp`, `fromComponents[UTC]`, `fromISO8601`, `fromString` | Never fail — invalid input yields an Invalid Date, as in JS |
 | Timezone (host) | `loadSystemTimezone`, `loadNamedTimezone`, `loadEmbeddedTimezone`, `setLocalTimezone`, `clearLocalTimezone` | Process-wide, like a JS engine's host environment |
 | Getters | `get*` / `getUTC*` (8 components), `getTime`, `getTimezoneOffset`, `getYear` | Component getters return `?i32` — `null` ≡ JS `NaN` |
-| Setters | `set*` / `setUTC*`, `setTime`, `setYear` | Invalid Date stays invalid; results TimeClip-clamped |
+| Setters | `set*` / `setUTC*`, `setTime`, `setYear` | `setFullYear`/`setUTCFullYear`/`setYear` can repair Invalid Date; other component setters preserve it. `setTime` replaces the timestamp. Results are TimeClip-clamped. |
 | Formatting | `toString`, `toDateString`, `toTimeString`, `toISOString`, `toJSON`, `toUTCString`, `toGMTString`, `toLocale*String[Style]` | Take `allocator`, return owned `[]u8`; `toJSON` returns `!?[]u8` (`null` for Invalid Date) |
 | Arithmetic | `add{Milliseconds,Seconds,Minutes,Hours,Days}` (`!ZDate`), `diff*` (`?i64`) | `diff*` return `null` if either date is invalid |
 | Comparison | `equals`, `before`, `after` (`bool`), `compare` (`?std.math.Order`) | NaN semantics: always false / `null` with an Invalid Date |
@@ -151,6 +160,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Current timestamp in milliseconds
     const ms = ZDate.nowTimestamp(io);
+    std.debug.print("Timestamp: {d}\n", .{ms});
 
     // Current date object (getters return ?i32; null = Invalid Date)
     const today = ZDate.now(io);
@@ -320,6 +330,7 @@ test "nowTimestamp() returns positive value" {
     const io = threaded.io();
 
     const ms = ZDate.nowTimestamp(io);
+    std.debug.print("Timestamp: {d}\n", .{ms});
     try std.testing.expect(ms > 0);
 }
 ```
@@ -358,7 +369,7 @@ const ZDateError = zdate.ZDateError;
 ## Building
 
 ```bash
-# Build library
+# Configure the project
 zig build
 
 # Run tests
@@ -403,9 +414,9 @@ Z-Date is organized into modular components:
 - Range: ±273,785 years from epoch (±8.64e15 milliseconds)
 - Invalid dates represented by `std.math.maxInt(i64)`
 
-### Zig 0.16 Clock API
+### Zig 0.17 Clock API
 
-Uses `std.Io.Clock.real.now(io).toMilliseconds()` for wall-clock time, integrating cleanly with Zig 0.16's unified I/O backend system (`std.Io.Threaded`, `std.Io.Evented`).
+Uses `std.Io.Clock.real.now(io).toMilliseconds()` for wall-clock time, integrating cleanly with Zig 0.17's unified I/O backend system (`std.Io.Threaded`, `std.Io.Evented`).
 
 ### Error Strategy
 
@@ -419,23 +430,49 @@ Uses `std.Io.Clock.real.now(io).toMilliseconds()` for wall-clock time, integrati
 - The local zone is **process-wide state**, mirroring ECMA-262's model where
   the timezone belongs to the host environment, not to each Date value — so
   `ZDate` stays an 8-byte value type and no method signature carries a zone
-- All methods available in both UTC and local variants
+- Component getters/setters are available in both UTC and local variants
 - Backed by real IANA tzdata (TZif via `std.Tz`), not fixed offsets: historic
   DST transitions, POSIX TZ footer rules beyond the table, and the spec's
   local→UTC disambiguation at transitions
 - Until a zone is loaded, local == UTC (offset 0) — the behavior ECMA-262
   prescribes for hosts without timezone data
 
+## Performance comparison
+
+The pre-optimization Zig 0.17 code is preserved in `benchmarks/baseline-zig-0.17.tar.gz`
+with a SHA-256 manifest. `zig build test` includes differential tests against that
+snapshot; those tests and benchmarks require Python 3 for verified extraction.
+
+Run `python3 scripts/benchmark.py --runs 3 --mode fast` for paired measurements.
+The runner fixes CPU affinity on Linux, warms both versions, alternates execution
+order, checks matching checksums, and writes raw samples plus median results to
+`benchmarks/results-fast.{csv,json,md}`. Use `--mode safe` to measure safety-enabled
+builds. `zig build benchmark -Doptimize=fast` runs one process and prints raw samples.
+
+The POSIX transition cache holds one rule/year per thread, performs no allocation,
+and compares rule values so changing zones cannot reuse stale entries. WASM uses
+the uncached calculation. ZDate remains an 8-byte value.
+
+Measured on Linux x86_64 with Zig 0.17.0 `fast`, three processes and seven
+alternating pairs per case (21 samples per version). Median speedups included
+5.57× for `getUTCHours`, 9.37× for `getUTCMilliseconds`, 4.59× for `setUTCHours`,
+and 2.09× for numeric `toLocaleString` on 2000–2030 Santiago timestamps.
+Combined localized formatting dropped from seven allocations to one in the
+measured sample. The POSIX offset path reached 12.76× for dates within 2200,
+and 1.36× for random future years; historical offset queries were effectively
+unchanged. These are per-operation benchmarks, not an application-wide speedup.
+See [all 33 cases, raw samples and dispersion](benchmarks/results-fast.md).
+
 ## Compatibility
 
-- **Zig Version**: 0.16.0 or later
+- **Zig Version**: 0.17.0 or later
 - **ECMAScript**: Full Date API compatibility (see the conformance matrix below)
 - **ISO 8601**: Complete parsing and formatting support
 - **Platforms**: Linux, macOS, Windows (all platforms supported by Zig)
 
 ## ECMA-262 §21.4 Conformance Matrix
 
-Every behavior below is covered by the test suite (300+ tests), including a
+Every behavior below is covered by the test suite (310 tests), including a
 differential suite (`tests/v8_differential_test.zig`) whose expected values
 are V8's actual output — 150 random timestamps across the full ±8.64e15 range
 plus DST-transition edge cases — and ports of official test262 cases
@@ -447,21 +484,32 @@ plus DST-transition edge cases — and ports of official test262 cases
 | Constructors: normalization (MakeDay/MakeTime) | ✅ | Month/day/time overflow rolls over, `(2024, 13, 1)` → Feb 2025; two-digit years map to 1900-1999 (MakeFullYear) |
 | Getters (`get*`/`getUTC*`) | ✅ | Return `?i32`; `null` ≡ JS `NaN` for Invalid Date |
 | `getTimezoneOffset` | ✅ | Per-date (changes across DST), `null` for Invalid Date |
-| Setters (`set*`/`setUTC*`, `setTime`) | ✅ | Invalid Date stays invalid; results clamped by TimeClip |
+| Setters (`set*`/`setUTC*`, `setTime`) | ✅ | Year setters can repair Invalid Date; `setTime` replaces it; other component setters preserve Invalid Date. Results clamped by TimeClip. |
 | `Date.parse`: ISO 8601 (§21.4.3.2) | ✅ | Strict positional grammar; extended ±YYYYYY years; ±HH:mm offsets; date-only → UTC, date-time w/o offset → local |
 | `Date.parse`: legacy formats | ✅ | V8-parity grammar: `toString`/`toUTCString` round-trips, month names, AM/PM, `2024/01/15`, ISO-with-space, bare ±HHMM offsets, parenthesized zone names; local-time semantics as in V8 |
-| Formatting (`toISOString`, `toUTCString`, `toString`, …) | ✅ | Signed 6-digit expanded years outside [0, 9999]; test262 format cases pass |
+| Formatting (`toISOString`, `toUTCString`, `toString`, …) | Partial | Expanded ISO years and UTC format cases pass. Local `toString`/`toTimeString` currently label the offset as `GMT+0000`; see limitations. |
 | `toJSON` | ✅ | `null` (not an error) for Invalid Date |
 | NaN comparison semantics | ✅ | `equals`/`before`/`after` false and `compare`/`diff*` `null` when either date is invalid |
 | Local timezone (LocalTZA) | ✅ | Real IANA tzdata via `std.Tz` (RFC 8536): system zone (TZ env, `/etc/localtime`, Windows registry name via CLDR mapping), historical DST transitions, POSIX TZ footer rules for dates beyond the table, and the spec's local-time disambiguation (tc39/ecma262#778) |
-| Annex B (`getYear`, `setYear`, `toGMTString`) | ✅ | One documented deviation: `setYear` on an Invalid Date stays invalid (spec resets to +0) |
+| Annex B (`getYear`, `setYear`, `toGMTString`) | ✅ | `setYear` repairs Invalid Date via the same epoch fallback as `setFullYear`. |
 | `toLocale*String` | ✅* | 145 locales (Day.js data) with numeric and long (`Intl` `dateStyle: "long"`-like) styles; not CLDR/ICU-backed |
 
 **Documented deviations** (deliberate, all covered by tests):
 `null` replaces JS `NaN` throughout (Zig has no NaN-able integers);
-`setYear` on an Invalid Date does not resurrect it; `toLocale*` uses bundled
-Day.js-derived locale data rather than full CLDR. Hosts without timezone data
+`toLocale*` uses bundled Day.js-derived locale data rather than full CLDR. Hosts without timezone data
 run with offset 0, which ECMA-262 explicitly permits.
+
+### Current limitations
+
+- `toString` and `toTimeString` render local clock components but currently print
+  `GMT+0000` even when a non-UTC zone is configured. Use `toISOString` or
+  `toUTCString` for an unambiguous absolute-time representation.
+- For `addSeconds`, `addMinutes`, `addHours` and `addDays`, the scaled duration must
+  fit `i64`. Extreme arguments can overflow before the checked addition.
+- Prefer constructors and setters over writing `timestamp` directly; calendar
+  component setters assume the existing value is valid or the invalid sentinel.
+- Local timezone configuration is process-wide. Configure it once before
+  concurrent use. No zone is loaded implicitly; local time defaults to UTC.
 
 ### Timezone data
 
@@ -496,4 +544,4 @@ For Spanish documentation, see [README.es.md](README.es.md).
 
 ---
 
-**Z-Date** — Built with Zig 0.16 for high-performance JavaScript engines
+**Z-Date** — Built with Zig 0.17 for high-performance JavaScript engines

@@ -1,3 +1,40 @@
+//! Z-Date 0.1.0: JavaScript-style dates for Zig 0.17.
+//!
+//! `ZDate` stores an eight-byte UTC millisecond timestamp. Component getters
+//! return `null` for Invalid Date; constructors return a value even on invalid
+//! input. Use `fromTimestamp`, `fromComponentsUTC` or `fromISO8601` to construct
+//! dates and `isValid` to check them.
+//!
+//! ## Ownership and local time
+//!
+//! Formatting returns caller-owned slices: free each result with the allocator
+//! passed to that method. `toJSON` can return `null` instead of a slice.
+//! Configure the process-wide timezone once before concurrent use; otherwise
+//! local time equals UTC. Timezone installation transfers ownership, and
+//! `clearLocalTimezone` releases it. POSIX offset lookup has one cache entry per
+//! thread; WASM uses the uncached calculation.
+//!
+//! ## Example
+//!
+//! ```zig
+//! const std = @import("std");
+//! const zdate = @import("zdate");
+//!
+//! pub fn main(init: std.process.Init) !void {
+//!     const date = zdate.ZDate.fromISO8601("2024-02-29T12:30:00.000Z");
+//!     const text = try date.toISOString(init.gpa);
+//!     defer init.gpa.free(text);
+//!     std.debug.print("{s}\n", .{text});
+//! }
+//! ```
+//!
+//! ## Compatibility
+//!
+//! UTC ISO formatting handles expanded years and the full TimeClip range.
+//! Local `toString`/`toTimeString` currently print a literal `GMT+0000` suffix,
+//! even with a non-UTC zone. Scaled arithmetic durations must fit `i64` before
+//! addition. See the README for the conformance matrix and current limitations.
+
 const std = @import("std");
 const constants = @import("constants.zig");
 const errors = @import("errors.zig");
@@ -11,13 +48,21 @@ const arithmetic = @import("arithmetic.zig");
 const localeMod = @import("locale.zig");
 const tzdata = @import("tzdata.zig");
 
+/// TimeClip bounds and millisecond conversion constants.
 pub const Constants = constants.Constants;
+/// Date parsing, range and arithmetic errors.
 pub const ZDateError = errors.ZDateError;
+/// Select UTC arithmetic or the configured process-wide local timezone.
 pub const TimezoneMode = timezone.TimezoneMode;
+/// Gregorian date fields; months are zero-based and days are one-based.
 pub const DateComponents = calendar.DateComponents;
+/// Locale names, numeric order, clock style and long-format pattern.
 pub const Locale = localeMod.Locale;
+/// Owned TZif data with historical transitions and optional POSIX rules.
 pub const Timezone = tzdata.Timezone;
+/// Allocation-free POSIX timezone rules for extrapolating UTC offsets.
 pub const PosixTz = tzdata.PosixTz;
+/// Numeric or long localized date rendering.
 pub const DateStyle = formatting.FormattingMethods.DateStyle;
 
 /// Embedded IANA tzdata (for hosts without system tzdata: Windows, WASM,
@@ -195,7 +240,7 @@ const ArithmeticMethods = arithmetic.ArithmeticMethods;
 const Allocator = std.mem.Allocator;
 
 /// Z-Date: ECMAScript-compatible date/time library for Zig
-/// Implements the full JavaScript Date API specification
+/// Provides the JavaScript Date API surface with the documented limitations.
 ///
 /// Invalid Date: ECMAScript represents an invalid date as a Date whose internal
 /// [[DateValue]] is NaN. ZDate has no floating-point state, so INVALID_TIME
@@ -213,7 +258,7 @@ pub const ZDate = struct {
     // ===== Constructors =====
 
     /// Initialize with current date/time
-    /// Requires io context from std.process.Init (Zig 0.16+)
+    /// Requires io context from std.process.Init (Zig 0.17+)
     pub fn now(io: std.Io) Self {
         return fromTimestamp(nowTimestamp(io));
     }
@@ -302,7 +347,7 @@ pub const ZDate = struct {
     // ===== Static Methods (Date.*) =====
 
     /// Date.now() - Get current timestamp in milliseconds
-    /// Requires io context from std.process.Init (Zig 0.16+)
+    /// Requires io context from std.process.Init (Zig 0.17+)
     pub fn nowTimestamp(io: std.Io) i64 {
         const t = std.Io.Clock.real.now(io);
         return t.toMilliseconds();
@@ -491,7 +536,7 @@ pub const ZDate = struct {
 
     // ===== Setters (Local Time) =====
 
-    /// setFullYear() - Set year (local time)
+    /// setFullYear() - Set year (local time). Invalid Date uses epoch as its base.
     pub fn setFullYear(self: *Self, year: i32, month: ?i32, day: ?i32) i64 {
         return SetterMethods.setFullYear(&self.timestamp, year, month, day, .local);
     }
@@ -532,14 +577,15 @@ pub const ZDate = struct {
     }
 
     /// setYear() - Legacy (ECMA-262 Annex B.2.3): two-digit years (0-99) map
-    /// to 1900-1999, local time. Superseded by setFullYear().
+    /// to 1900-1999, local time. Repairs Invalid Date using an epoch base.
+    /// Superseded by setFullYear().
     pub fn setYear(self: *Self, year: i32) i64 {
         return SetterMethods.setYear(&self.timestamp, year, .local);
     }
 
     // ===== Setters (UTC) =====
 
-    /// setUTCFullYear() - Set year (UTC)
+    /// setUTCFullYear() - Set year (UTC). Invalid Date uses epoch as its base.
     pub fn setUTCFullYear(self: *Self, year: i32, month: ?i32, day: ?i32) i64 {
         return SetterMethods.setFullYear(&self.timestamp, year, month, day, .utc);
     }
@@ -577,52 +623,63 @@ pub const ZDate = struct {
     // ===== Formatting Methods =====
 
     /// toString() - Convert to string (local time)
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toString(self.timestamp, allocator);
     }
 
     /// toDateString() - Date portion only
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toDateString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toDateString(self.timestamp, allocator);
     }
 
     /// toTimeString() - Time portion only
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toTimeString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toTimeString(self.timestamp, allocator);
     }
 
     /// toISOString() - ISO 8601 format (UTC)
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
+    /// Returns `InvalidDate` for the invalid sentinel or `OutOfRange` outside TimeClip.
     pub fn toISOString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toISOString(self.timestamp, allocator);
     }
 
     /// toJSON() - JSON representation. Returns null (JSON `null`) for Invalid
     /// Date rather than erroring, per ECMA-262 Date.prototype.toJSON.
+    /// A non-null result is allocator-owned and must be freed. May return `OutOfMemory`.
     pub fn toJSON(self: Self, allocator: Allocator) !?[]u8 {
         return FormattingMethods.toJSON(self.timestamp, allocator);
     }
 
     /// toUTCString() - UTC string
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toUTCString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toUTCString(self.timestamp, allocator);
     }
 
     /// toGMTString() - Legacy alias for toUTCString(); prefer toUTCString() in new code.
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toGMTString(self: Self, allocator: Allocator) ![]u8 {
         return FormattingMethods.toGMTString(self.timestamp, allocator);
     }
 
     /// toLocaleDateString() - Localized date string. `null` locale defaults to en-US.
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toLocaleDateString(self: Self, allocator: Allocator, locale: ?Locale) ![]u8 {
         return FormattingMethods.toLocaleDateString(self.timestamp, allocator, locale);
     }
 
     /// toLocaleTimeString() - Localized time string. `null` locale defaults to en-US.
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toLocaleTimeString(self: Self, allocator: Allocator, locale: ?Locale) ![]u8 {
         return FormattingMethods.toLocaleTimeString(self.timestamp, allocator, locale);
     }
 
     /// toLocaleString() - Localized date and time string. `null` locale defaults to en-US.
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toLocaleString(self: Self, allocator: Allocator, locale: ?Locale) ![]u8 {
         return FormattingMethods.toLocaleString(self.timestamp, allocator, locale);
     }
@@ -630,11 +687,13 @@ pub const ZDate = struct {
     /// toLocaleDateString with an explicit style, mirroring
     /// Intl.DateTimeFormat's dateStyle: .numeric ("01/15/2024") or .long
     /// ("January 15, 2024" / "15 de enero de 2024" / "2024年1月15日").
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toLocaleDateStringStyle(self: Self, allocator: Allocator, locale: ?Locale, style: DateStyle) ![]u8 {
         return FormattingMethods.toLocaleDateStringStyle(self.timestamp, allocator, locale, style);
     }
 
     /// toLocaleString with an explicit date style (see toLocaleDateStringStyle).
+    /// Returns allocator-owned text; the caller must free it. May return `OutOfMemory`.
     pub fn toLocaleStringStyle(self: Self, allocator: Allocator, locale: ?Locale, style: DateStyle) ![]u8 {
         return FormattingMethods.toLocaleStringStyle(self.timestamp, allocator, locale, style);
     }
@@ -669,30 +728,45 @@ pub const ZDate = struct {
     }
 
     /// Add milliseconds
+    /// Returns a new date, leaving this value unchanged. May return `OutOfRange` or
+    /// `TimestampOverflow` from the checked millisecond addition.
     pub fn addMilliseconds(self: Self, ms: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addMilliseconds(self.timestamp, ms);
         return fromTimestamp(new_timestamp);
     }
 
     /// Add seconds
+    /// Returns a new date, leaving this value unchanged. May return `OutOfRange` or
+    /// `TimestampOverflow` from the checked millisecond addition.
+    /// The seconds argument scaled to milliseconds must fit `i64`.
     pub fn addSeconds(self: Self, seconds: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addSeconds(self.timestamp, seconds);
         return fromTimestamp(new_timestamp);
     }
 
     /// Add minutes
+    /// Returns a new date, leaving this value unchanged. May return `OutOfRange` or
+    /// `TimestampOverflow` from the checked millisecond addition.
+    /// The minutes argument scaled to milliseconds must fit `i64`.
     pub fn addMinutes(self: Self, minutes: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addMinutes(self.timestamp, minutes);
         return fromTimestamp(new_timestamp);
     }
 
     /// Add hours
+    /// Returns a new date, leaving this value unchanged. May return `OutOfRange` or
+    /// `TimestampOverflow` from the checked millisecond addition.
+    /// The hours argument scaled to milliseconds must fit `i64`.
     pub fn addHours(self: Self, hours: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addHours(self.timestamp, hours);
         return fromTimestamp(new_timestamp);
     }
 
     /// Add days
+    /// Returns a new date, leaving this value unchanged. May return `OutOfRange` or
+    /// `TimestampOverflow` from the checked millisecond addition.
+    /// The 24-hour days argument scaled to milliseconds must fit `i64`.
+    /// This is a fixed duration, not a DST-aware calendar-day increment.
     pub fn addDays(self: Self, days: i64) !Self {
         const new_timestamp = try ArithmeticMethods.addDays(self.timestamp, days);
         return fromTimestamp(new_timestamp);
@@ -739,5 +813,7 @@ pub const ZDate = struct {
 };
 
 // Export all public APIs
+/// Low-level Gregorian calculations; normalize fields before converting to timestamps.
 pub const CalendarUtil = CalendarUtils;
+/// Process-wide local timezone configuration and UTC/local conversion.
 pub const TimezoneUtil = TimezoneUtils;

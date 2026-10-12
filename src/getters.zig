@@ -44,52 +44,37 @@ pub const GetterMethods = struct {
 
     /// Get day of week (0-6, Sunday=0) from timestamp
     pub fn getDay(timestamp: i64, tz_mode: TimezoneMode) ?i32 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return null;
-        }
-
-        const components = CalendarUtils.timestampToComponents(timestamp, tz_mode);
-        return CalendarUtils.getDayOfWeek(components.year, components.month, components.day);
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return null;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, tz_mode);
+        return @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_DAY) + 4, 7));
     }
 
     /// Get hours (0-23) from timestamp
     pub fn getHours(timestamp: i64, tz_mode: TimezoneMode) ?i32 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return null;
-        }
-
-        const components = CalendarUtils.timestampToComponents(timestamp, tz_mode);
-        return components.hour;
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return null;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, tz_mode);
+        return @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_HOUR), 24));
     }
 
     /// Get minutes (0-59) from timestamp
     pub fn getMinutes(timestamp: i64, tz_mode: TimezoneMode) ?i32 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return null;
-        }
-
-        const components = CalendarUtils.timestampToComponents(timestamp, tz_mode);
-        return components.minute;
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return null;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, tz_mode);
+        return @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_MINUTE), 60));
     }
 
     /// Get seconds (0-59) from timestamp
     pub fn getSeconds(timestamp: i64, tz_mode: TimezoneMode) ?i32 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return null;
-        }
-
-        const components = CalendarUtils.timestampToComponents(timestamp, tz_mode);
-        return components.second;
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return null;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, tz_mode);
+        return @intCast(@mod(@divFloor(adjusted, Constants.MS_PER_SECOND), 60));
     }
 
     /// Get milliseconds (0-999) from timestamp
     pub fn getMilliseconds(timestamp: i64, tz_mode: TimezoneMode) ?i32 {
-        if (CalendarUtils.isInvalidTimestamp(timestamp)) {
-            return null;
-        }
-
-        const components = CalendarUtils.timestampToComponents(timestamp, tz_mode);
-        return components.millisecond;
+        if (CalendarUtils.isInvalidTimestamp(timestamp)) return null;
+        const adjusted = timezone.TimezoneUtils.applyTimezoneOffset(timestamp, tz_mode);
+        return @intCast(@mod(adjusted, 1000));
     }
 
     /// Get timestamp value
