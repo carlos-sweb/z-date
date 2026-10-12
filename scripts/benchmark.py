@@ -81,7 +81,7 @@ metadata = dict(zig=version, optimize=args.mode, host=platform.platform(), cpu_a
 output = ROOT/'benchmarks'/f'results-{args.mode}'
 output.with_suffix('.raw.txt').write_text('\n'.join(raw))
 with output.with_suffix('.csv').open('w', newline='') as file:
-    writer = csv.DictWriter(file, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
+    writer = csv.DictWriter(file, fieldnames=list(rows[0]), lineterminator='\n'); writer.writeheader(); writer.writerows(rows)
 output.with_suffix('.json').write_text(json.dumps(dict(metadata=metadata, results=summary, allocations=allocs), indent=2)+'\n')
 lines = [f'# Benchmark A/B — Zig {version}, {args.mode}', '',
          f'{args.runs} procesos × 7 pares = {expected} muestras por versión/caso; 4096 entradas deterministas.',
